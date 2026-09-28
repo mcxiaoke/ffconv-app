@@ -24,7 +24,24 @@ export default defineConfig({
     plugins: [
       copyCoreData,
       externalizeDepsPlugin({
-        exclude: ["p-map", "systeminformation", "fs-extra", "execa", "yaml", "file-type"],
+        // 转码引擎闭包依赖全部打进 bundle（main 产物仅外置 electron 与 node 内建模块）
+        exclude: [
+          "chalk",
+          "cli-progress",
+          "dayjs",
+          "execa",
+          "fdir",
+          "fs-extra",
+          "iconv-lite",
+          "js-xxhash",
+          "js-yaml",
+          "loglevel",
+          "loglevel-plugin-prefix",
+          "music-metadata",
+          "p-map",
+          "systeminformation",
+          "which",
+        ],
       }),
     ],
   },
