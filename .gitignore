@@ -109,6 +109,9 @@ dist
 #custom
 data/
 Downloads/
+release/
+test-results/
+.zcode/
 
 ### IntelliJ IDEA ###
 .idea

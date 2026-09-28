@@ -1,0 +1,543 @@
+/*
+ * 文件: ffmpeg_presets.js
+ * 项目: mediac
+ * 创建: 2024-04-27 13:21:17
+ * 修改: 2026-09-21（Phase 1 单源化：预设定义收敛到 presets/default.yaml）
+ * 作者: mcxiaoke (github@mcxiaoke.com)
+ * 许可证: Apache License 2.0
+ *
+ * FFmpeg转码预设配置库
+ * 定义了各种音视频格式转换的预设参数，支持批量处理和自定义配置
+ *
+ * S-4 单源化（Phase 1，2026-09-21）：
+ *   预设定义的唯一事实源是包内 presets/default.yaml（随 npm 包发布），
+ *   用户可通过 ~/.mediac/presets.yaml 或 cwd/presets.yaml 分层覆盖/新增，
+ *   同名覆盖必须显式声明 `_override: true`（P0-1 修复）。
+ *   本文件不再包含任何硬编码预设定义。
+ */
+
+import path from "path"
+import { getPresetSearchPaths, loadPresetLayers, mergePresets } from "./preset_loader.js"
+import { parseBitrate } from "../lib/helper.js"
+
+/**
+ * FFmpeg命令参数预设类
+ * 封装FFmpeg转码参数，提供统一的配置接口
+ * 支持视频、音频、图片等多种媒体格式的转换
+ */
+class FFmpegPreset {
+    constructor(
+        name,
+        {
+            format,
+            type,
+            prefix,
+            suffix,
+            audioCodec = "aac",
+            inputArgs,
+            streamArgs,
+            outputArgs,
+            filters,
+            // 三段式滤镜（S-4 重构）：
+            //   pre_filters  → 缩放前执行（如反交错）
+            //   filters      → 主滤镜串，`{scaleFilter}` 占位符由 tier 层替换为实际缩放滤镜
+            //   post_filters → 缩放后执行（如锐化）
+            // 三段以 `,` 拼接为最终 -vf 参数；仅有 filters 时行为与旧版一致。
+            pre_filters,
+            post_filters,
+            output,
+            videoBitrate = 0,
+            maxBitrate = 0,
+            videoQuality = 0,
+            audioBitrate = 0,
+            audioQuality = 0,
+            dimension = 0,
+            speed = 1,
+            framerate = 0,
+            smartBitrate,
+            // 输出视频 codec 族："h264" | "hevc" | "av1" | "vp9"
+            videoCodecFamily,
+        } = {},
+    ) {
+        this.name = name
+        this.format = format
+        this.type = type
+        this.prefix = prefix
+        this.suffix = suffix
+        this.videoCodecFamily = videoCodecFamily
+        this.audioCodec = audioCodec
+        this.inputArgs = inputArgs
+        this.streamArgs = streamArgs
+        this.outputArgs = outputArgs
+        this.filters = filters
+        // 三段式滤镜字段
+        this.pre_filters = pre_filters
+        this.post_filters = post_filters
+        // 输出目录
+        this.output = output
+        // 视频码率和质量（严格字符串：支持 "233k"/"4M" 等带单位写法，归一为 bps 数字）
+        this.videoBitrate = normalizeBitrate(videoBitrate)
+        // 视频峰值码率（缺省 0 → buildEncoderArgs 用 videoBitrate×1.5 兜底）
+        this.maxBitrate = normalizeBitrate(maxBitrate)
+        this.videoQuality = videoQuality
+        // 音频码率和质量
+        this.audioBitrate = normalizeBitrate(audioBitrate)
+        this.audioQuality = audioQuality
+        // 视频尺寸
+        this.dimension = dimension
+        // 视频加速
+        this.speed = speed
+        // 视频帧率
+        this.framerate = framerate
+        // 智能计算码率
+        this.smartBitrate = smartBitrate
+        // 元数据参数
+        // 用户从命令行设定的参数
+        // 优先级最高
+        this.userArgs = {
+            videoBitrate: 0,
+            videoQuality: 0,
+            audioBitrate: 0,
+            audioQuality: 0,
+            dimension: 0,
+            speed: 0,
+            framerate: 0,
+            audioCopy: false,
+            videoCopy: false,
+            metadataPairs: [], // 来自 --metadata / --ffargs md=（[[key,value],...]）
+        }
+    }
+
+    update(source) {
+        for (const key in source) {
+            this[key] = source[key]
+        }
+        return this
+    }
+
+    // 构造函数，参数为另一个 Preset 对象
+    static fromPreset(preset) {
+        return new FFmpegPreset(preset.name, preset)
+    }
+}
+
+const PRESET_NAMES = []
+const PRESET_MAP = new Map()
+
+/**
+ * 码率字段统一归一化为 bps 数字。
+ *
+ * 严格字符串规则（2026-09-23）：YAML 预设里的 videoBitrate / audioBitrate / maxBitrate
+ * 一律写成带单位的字符串（如 "233k"、"4M"、"1.5m"），本函数经 parseBitrate 换算为 bps。
+ * 程序化构造（测试 / FFmpegPreset.fromPreset）仍允许传 bps 裸数字，不强制字符串。
+ * 返回 0 表示「未设置」。
+ * @param {number|string|null|undefined} value
+ * @returns {number} bps 纯数字；未设置返回 0
+ */
+function normalizeBitrate(value) {
+    if (value == null || value === "" || value === 0) {
+        return 0
+    }
+    return parseBitrate(value)
+}
+
+/**
+ * 根据预设名称获取FFmpeg预设
+ *
+ * @param {string} name - 预设名称
+ * @returns {FFmpegPreset|undefined} FFmpeg预设对象
+ */
+function getPreset(name) {
+    return PRESET_MAP.get(name)
+}
+
+/**
+ * 获取所有预设Map
+ *
+ * @returns {Map} 包含所有预设的Map对象
+ */
+function getAllPresets() {
+    return PRESET_MAP
+}
+
+/**
+ * 获取所有预设名称列表
+ *
+ * P0-2 修复：返回副本而非内部数组引用。
+ * 此前 yargs builder 里 `choices: presets.getAllNames()` 直接拿到内部数组，
+ * 后续 loadYamlPresets 向同一数组 push 时，会对已注册的 choices 造成未定义行为。
+ * 现在每次返回新数组，调用方任何修改都不影响内部状态。
+ *
+ * @returns {Array<string>} 预设名称数组（副本）
+ */
+function getAllNames() {
+    return [...PRESET_NAMES]
+}
+
+/**
+ * 检查预设是否为音频提取预设
+ *
+ * @param {FFmpegPreset} preset - FFmpeg预设对象
+ * @returns {boolean} 如果是音频提取预设返回true
+ */
+function isAudioExtract(preset) {
+    // 内置预设已迁移到 YAML（presets/default.yaml），此处避免引用已删除的常量
+    return preset.name === "audio_extract"
+}
+
+/**
+ * 异步初始化预设。
+ *
+ * 预设定义全部来自 YAML 分层（低 → 高优先级，见 §2.1）：
+ *   1. 包内 presets/default.yaml（内置层，单源）
+ *   2. ~/.mediac/presets.yaml|yml（用户全局层）
+ *   3. cwd/presets.yaml|yml（项目局部层）
+ * 同名覆盖必须显式 `_override: true`，否则 warn 跳过（P0-1 修复）。
+ *
+ * @param {string} customPath - 自定义 YAML 文件路径（仅加载该文件，不走分层）
+ * @returns {Promise<void>}
+ */
+async function initPresetsAsync(customPath = null) {
+    const layers = await loadPresetLayers(customPath)
+    let merged = new Map()
+    for (const layer of layers) {
+        merged = mergePresets(merged, layer)
+    }
+    PRESET_NAMES.length = 0
+    PRESET_MAP.clear()
+    for (const [name, preset] of merged) {
+        const fp = new FFmpegPreset(name, preset)
+        PRESET_NAMES.push(name)
+        PRESET_MAP.set(name, fp)
+    }
+}
+
+/**
+ * 获取预设加载路径列表（含包内 default.yaml 与用户层搜索路径）
+ * @returns {string[]}
+ */
+function getPresetPaths() {
+    return getPresetSearchPaths()
+}
+
+/**
+ * 参数别名映射
+ * 用于 ffargs 复合参数的别名转换
+ */
+const ARG_ALIASES = {
+    vb: "videoBitrate",
+    vbit: "videoBitrate",
+    vbk: "videoBitrate",
+    vbitrate: "videoBitrate",
+    vq: "videoQuality",
+    vquality: "videoQuality",
+    // vc/vcodec 表示视频编码器（codec），而非流复制。
+    // 此前误映射为 videoCopy，导致 `--ffargs "vc=h264"` 静默得到 `-c:v copy`。
+    // 流复制请使用 --video-copy / --audio-copy 专用选项。
+    vc: "videoCodec",
+    vcodec: "videoCodec",
+    ab: "audioBitrate",
+    abit: "audioBitrate",
+    abk: "audioBitrate",
+    abitrate: "audioBitrate",
+    aq: "audioQuality",
+    aquality: "audioQuality",
+    // ac/acodec 表示音频编码器（codec），理由同上
+    ac: "audioCodec",
+    acodec: "audioCodec",
+    px: "prefix",
+    pf: "prefix",
+    sx: "suffix",
+    sf: "suffix",
+    sp: "speed",
+    dm: "dimension",
+    fps: "framerate",
+    md: "metadata",
+    meta: "metadata",
+    metadata: "metadata",
+    an: "anime",
+    anime: "anime",
+}
+
+/**
+ * 参数优先级说明:
+ * 1. 预设默认值 (最低优先级)
+ * 2. ffargs 复合参数
+ * 3. 命令行单独参数 (最高优先级)
+ */
+
+/**
+ * 从 ffargs 对象应用参数到 argv
+ * 优先级: 命令行单独参数 > ffargs 复合参数 > 预设默认值
+ *
+ * @param {Object} argv - 命令行参数对象
+ * @param {Object} ffargs - 解析后的 ffargs 对象
+ * @returns {Object} 合并后的 argv
+ */
+function applyFfargs(argv, ffargs) {
+    if (!ffargs || typeof ffargs !== "object") {
+        return argv
+    }
+
+    const result = { ...argv }
+
+    for (const [key, value] of Object.entries(ffargs)) {
+        const normalizedKey = ARG_ALIASES[key] || key
+
+        if (value === null || value === undefined || value === "") {
+            continue
+        }
+
+        // 命令行参数优先级最高，如果已设置则跳过
+        //
+        // 注意：判定必须是「用户是否真的提供了值」，而不能只看 !== undefined/null。
+        // cmd_ffmpeg.js 的数值选项全部声明了 `default: 0`，yargs 会把未提供的项填成 0，
+        // 而 `0 !== undefined && 0 !== null` 恒为真 —— 于是 ffargs 的
+        // vb/vq/ab/aq/dm/sp/fps 七个数值别名会被无条件丢弃，且无任何提示。
+        // 这里把数值型的 0 视为"未提供"（这些选项的有效取值都 > 0）。
+        const raw = result[normalizedKey]
+        const hasArgvValue =
+            raw !== undefined &&
+            raw !== null &&
+            !(typeof raw === "number" && raw === 0) &&
+            !(typeof raw === "boolean" && raw === false)
+
+        if (normalizedKey === "videoBitrate" || normalizedKey === "audioBitrate") {
+            if (!hasArgvValue) {
+                // ffargs 值可能是带单位字符串（vb=233k / abk=2M）：parseBitrate 统一归一为
+                // bps 数字，与 --video-bitrate 233k 的 CLI 行为对齐。
+                // 此前仅接受 number，字符串值被静默丢弃且无提示。
+                if (typeof value === "number" && value > 0) {
+                    result[normalizedKey] = value
+                } else if (typeof value === "string") {
+                    try {
+                        const normalized = parseBitrate(value)
+                        if (normalized > 0) {
+                            result[normalizedKey] = normalized
+                        }
+                    } catch {
+                        console.warn(
+                            `Invalid ffargs bitrate value: "${key}=${value}" (expected e.g. 233k / 2M / 2000000)`,
+                        )
+                    }
+                }
+            }
+        } else if (
+            normalizedKey === "videoQuality" ||
+            normalizedKey === "audioQuality" ||
+            normalizedKey === "dimension" ||
+            normalizedKey === "framerate"
+        ) {
+            if (!hasArgvValue && typeof value === "number" && value > 0) {
+                result[normalizedKey] = value
+            }
+        } else if (normalizedKey === "speed") {
+            if (!hasArgvValue && typeof value === "number" && value > 0) {
+                result[normalizedKey] = value
+            }
+        } else if (normalizedKey === "videoCopy" || normalizedKey === "audioCopy") {
+            if (!hasArgvValue) {
+                result[normalizedKey] = Boolean(value)
+            }
+        } else if (normalizedKey === "videoCodec" || normalizedKey === "audioCodec") {
+            // 编码器名称（如 h264_nvenc / libfdk_aac / copy）
+            if (!hasArgvValue && typeof value === "string" && value.length > 0) {
+                result[normalizedKey] = value
+            }
+        } else if (normalizedKey === "prefix" || normalizedKey === "suffix") {
+            if (!hasArgvValue && typeof value === "string") {
+                result[normalizedKey] = value
+            }
+        } else if (normalizedKey === "preset") {
+            if (!hasArgvValue && typeof value === "string") {
+                result.preset = value
+            }
+        } else if (normalizedKey === "anime") {
+            // an/anime 此前在 ARG_ALIASES 中却无消费分支，落入 Unknown-key 告警被丢弃
+            if (!hasArgvValue) {
+                result.anime = value === true || value === 1 || value === "1" || value === "true"
+            }
+        } else if (normalizedKey === "metadata") {
+            // metadata 支持：合并多组 key=value。
+            // 分隔符统一用 ';'（与 arg_parser 的键值分隔一致，且避开值内可能出现的逗号）；
+            // createFromArgv 再按 ';' 切分、'=' 取键，值内空格原样保留。
+            if (typeof value === "string" && value.length > 0) {
+                const existing = result.metadata || ""
+                result.metadata = existing ? `${existing};${value}` : value
+            }
+        } else {
+            // 非白名单参数：warn 提示，不静默丢弃
+            console.warn(
+                `Unknown ffargs key: "${key}". Valid keys: ${Object.keys(ARG_ALIASES).join(", ")}.`,
+            )
+        }
+    }
+
+    return result
+}
+
+/**
+ * 替换 ffmpeg 参数串中的编解码器
+ *
+ * 用于支持 `--ffargs "vc=h264_nvenc"` 这类"指定编码器"的写法。
+ * - 若参数串中已有 `-c:v <codec>`（或 `-c:a`），替换其值；
+ * - 若没有，则把 `-c:v <codec>` 前置到参数串开头。
+ * 特殊值 "copy" 直接生成流复制参数（与 --video-copy 等价）。
+/**
+ * 从命令行参数创建预设
+ * 深拷贝基础预设，并根据命令行参数进行覆盖和修改
+ *
+ * @param {Object} argv - 命令行参数对象
+ * @returns {FFmpegPreset} 配置好的预设对象
+ */
+function createFromArgv(argv) {
+    // 智能预设别名与动漫模式映射
+    let presetName = argv.preset || "hevc_2k"
+    let isAnime = argv.anime === true
+    if (presetName === "anime" || presetName === "hevc_anime") {
+        presetName = "hevc_2k"
+        isAnime = true
+    } else if (presetName === "av1_anime") {
+        presetName = "av1_2k"
+        isAnime = true
+    } else if (presetName === "h264_anime") {
+        presetName = "h264_2k"
+        isAnime = true
+    } else if (presetName === "av1") {
+        presetName = "av1_2k"
+    } else if (presetName === "hevc") {
+        presetName = "hevc_2k"
+    } else if (presetName === "h264") {
+        presetName = "h264_2k"
+    }
+
+    // 参数中指定的preset
+    let preset = getPreset(presetName)
+    // 克隆对象，不修改Map中的内容
+    preset = structuredClone(preset)
+    if (isAnime) {
+        preset.userArgs.anime = true
+    }
+    // 前缀可以为空字符串
+    if (typeof argv.prefix === "string") {
+        preset.prefix = argv.prefix
+    }
+    // 后缀可以为空字符串
+    if (typeof argv.suffix === "string") {
+        preset.suffix = argv.suffix
+    }
+    // 视频编码器（来自 ffargs 的 vc/vcodec 或 --video-codec）：
+    // 编码器由 userArgs.videoCodec 承载并穿透到 buildEncoderArgs（forcedEncoder）。
+    // 这样显式 encoder 时探测命令与真实命令用同一编码器。
+    // （旧式 preset.videoArgs 槽位已彻底移除，不再存在"写入被忽略 + warn"的路径。）
+    if (typeof argv.videoCodec === "string" && argv.videoCodec.length > 0) {
+        preset.userArgs.videoCodec = argv.videoCodec
+        if (argv.videoCodec === "copy") {
+            preset.userArgs.videoCopy = true
+            preset.filters = ""
+            preset.pre_filters = ""
+            preset.post_filters = ""
+        }
+    }
+    // 音频编码器（来自 ffargs 的 ac/acodec 或 --audio-codec）
+    if (typeof argv.audioCodec === "string" && argv.audioCodec.length > 0) {
+        preset.audioCodec = argv.audioCodec
+        preset.userArgs.audioCodec = argv.audioCodec
+    }
+    // 输出目录
+    if (typeof argv.output === "string") {
+        preset.output = path.resolve(argv.output)
+    }
+    // 用户指定 视频尺寸
+    if (argv.dimension > 0) {
+        preset.userArgs.dimension = argv.dimension
+    }
+    // 用户指定 视频速度
+    if (argv.speed > 0) {
+        preset.userArgs.speed = argv.speed
+    }
+    // 视频帧率，用户指定，优先级最高
+    if (argv.framerate > 0) {
+        preset.userArgs.framerate = argv.framerate
+    }
+    // 视频流复制，用户指定，优先级最高
+    if (argv.videoCopy) {
+        // copy 语义由 userArgs.videoCodec="copy" 承载，buildVideoArgsFromPlan 读到 copy
+        // 时直接输出 ["-c:v","copy"]。（旧式 videoArgs="-c:v copy" 写法会因 videoArgs
+        // 槽位不存在而静默失效、退回 libx264 —— 这正是本分支存在的原因。）
+        preset.userArgs.videoCodec = "copy"
+        preset.userArgs.videoCopy = true
+        // copy not compatible with filters
+        preset.filters = ""
+    } else {
+        // 视频码率，用户指定，优先级最高
+        // 输入可为纯数字（bps，对齐 ffmpeg）或带 k/m/g 单位（如 233k、3M）
+        if (argv.videoBitrate != null && argv.videoBitrate !== "" && argv.videoBitrate !== 0) {
+            preset.userArgs.videoBitrate = parseBitrate(argv.videoBitrate)
+        }
+        // 用户指定 视频质量参数
+        if (argv.videoQuality > 0) {
+            preset.userArgs.videoQuality = argv.videoQuality
+        }
+    }
+    // 音频流复制，用户指定，优先级最高
+    if (argv.audioCopy) {
+        preset.userArgs.audioCopy = true
+    } else {
+        // 如果不是复制音频流，音频码率，用户指定，优先级最高
+        // 输入可为纯数字（bps，对齐 ffmpeg）或带 k/m/g 单位（如 128k、3M）
+        if (argv.audioBitrate != null && argv.audioBitrate !== "" && argv.audioBitrate !== 0) {
+            preset.userArgs.audioBitrate = parseBitrate(argv.audioBitrate)
+        }
+        // 音频质量VBR，用户指定，优先级最高
+        if (argv.audioQuality > 0) {
+            preset.userArgs.audioQuality = argv.audioQuality
+        }
+    }
+    // --metadata / --ffargs md= 解析为追加项（定稿新增）：
+    // 按 ';' 切分组，'=' 取键，值原样保留（含空格）→ 存入 userArgs.metadataPairs，
+    // 由 buildMetaArgs 追加在自动 -metadata 之后（后写覆盖自动 title）。
+    // 单独走此通道而非塞进 --video-args/--audio-args，正是为了保住含空格的取值。
+    if (typeof argv.metadata === "string" && argv.metadata.trim().length > 0) {
+        const pairs = []
+        for (const seg of argv.metadata.split(";")) {
+            const s = seg.trim()
+            if (!s || !s.includes("=")) continue
+            const idx = s.indexOf("=")
+            const key = s.slice(0, idx).trim()
+            const value = s.slice(idx + 1) // 保留值内空格，不 trim
+            if (!key) continue
+            pairs.push([key, value])
+        }
+        if (pairs.length > 0) {
+            preset.userArgs.metadataPairs = pairs
+        }
+    }
+    // 流复制收口：copy 与滤镜管线互斥（ffmpeg: "Filtering and streamcopy cannot be used together"）。
+    // 此前 copy 分支只清了 filters，dimension/framerate/speed 仍会经 calculateDstArgs 生成
+    // scale/fps/setpts 滤镜，与 -c:v copy 同发导致命令必败。
+    // 放在所有 argv 覆盖之后统一收口，同时覆盖 --video-copy 与 --video-codec copy / ffargs vc=copy
+    // 两条入口（两处都会置 userArgs.videoCopy = true）。
+    if (preset.userArgs.videoCopy === true) {
+        preset.dimension = 0
+        preset.framerate = 0
+        preset.speed = 1
+        preset.userArgs.dimension = 0
+        preset.userArgs.framerate = 0
+        preset.userArgs.speed = 1
+    }
+    return preset
+}
+
+export default {
+    FFmpegPreset,
+    createFromArgv,
+    getPreset,
+    getAllPresets,
+    getAllNames,
+    isAudioExtract,
+    initPresetsAsync,
+    getPresetPaths,
+    applyFfargs,
+    ARG_ALIASES,
+}
