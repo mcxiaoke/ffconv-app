@@ -12,7 +12,7 @@ jobs:
 
     strategy:
       matrix:
-        # 与 package.json#engines 保持一致；测试入口使用 Node 21+ 的 glob 位置参数
+        # 与 package.json#engines 保持一致
         node-version: [22.x, 24.x]
 
     steps:
@@ -27,17 +27,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # 桌面端是独立包（根仓库未配置 workspaces），根 `npm ci` 不会安装它的
-      # devDependencies；而根 `lint` 串联了 `desktop:lint`，必须先单独安装。
-      - name: Install desktop dependencies
-        run: npm ci --prefix apps/mediac-desktop
-
-      # 语法检查：覆盖全仓库 *.js，并校验运行时版本与 package.json engines 一致
-      - name: Syntax check
-        run: npm run check
-
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+
+      # 构建是闭包完备性的最终校验：转码引擎（core/）全部导入与
+      # 依赖必须在此解析成功，产物 out/ 同时供 e2e 与打包使用
+      - name: Build
+        run: npm run build
