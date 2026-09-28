@@ -112,6 +112,9 @@ Downloads/
 release/
 test-results/
 .zcode/
+# 自带 ffmpeg 二进制不入库（目录由 resources/ffmpeg/README.md 锚定）
+resources/ffmpeg/*
+!resources/ffmpeg/README.md
 
 ### IntelliJ IDEA ###
 .idea

@@ -23,8 +23,9 @@ npm run test:e2e     # Playwright 端到端测试
 npm run package:win  # build + electron-builder（nsis/portable/zip）→ release/
 ```
 
-发布产物布局由 `electron-builder.yml` 决定：`extraResources` 打入根 `presets/`，
-asar 内只含 `out/**` 与 `package.json`。
+发布产物布局由 `electron-builder.yml` 决定：`extraResources` 打入根 `presets/` 与
+`resources/ffmpeg/`（后者目录内有 ffmpeg/ffprobe 二进制时才随包分发，见
+`resources/ffmpeg/README.md`），asar 内只含 `out/**` 与 `package.json`。
 
 ## 模块结构与依赖边界
 
@@ -92,4 +93,5 @@ asar 内只含 `out/**` 与 `package.json`。
 
 - Node.js **>= 22**（`package.json` engines，ES 模块）
 - 外部工具：ffmpeg、ffprobe（必需）；`mediainfo` CLI 可选（ffprobe 失败时的兜底探测）
-- 二进制定位优先级：`FFMPEG_PATH` → `FFMPEG_BINARY` → 设置面板自定义路径 → `PATH`（`which`）
+- 二进制定位优先级：设置面板自定义路径 → `FFMPEG_PATH` → `FFMPEG_BINARY` →
+  自带 `resources/ffmpeg/`（有则优先于 PATH）→ `PATH`（`which`）

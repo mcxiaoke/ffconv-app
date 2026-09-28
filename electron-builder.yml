@@ -13,6 +13,13 @@ extraResources:
     to: presets
     filter:
       - '**/*'
+  # 自带 ffmpeg/ffprobe（可选）：resources/ffmpeg/ 内有二进制才随包分发，
+  # 目录为空时复制 0 个文件、打包照常成功（见 resources/ffmpeg/README.md）
+  - from: resources/ffmpeg
+    to: ffmpeg
+    filter:
+      - '**/*'
+      - '!**/README.md'
 asarUnpack:
   - resources/**
 win:

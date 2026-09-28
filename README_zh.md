@@ -23,7 +23,15 @@
 
 - Node.js >= 22
 - FFmpeg + FFprobe：经 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量、设置面板指定，
-  或位于 `PATH`（解析顺序：`FFMPEG_PATH` → `FFMPEG_BINARY` → `PATH`）
+  或位于 `PATH`（解析顺序：设置面板自定义路径 → `FFMPEG_PATH`/`FFMPEG_BINARY`
+  → 自带 `resources/ffmpeg/` → `PATH`）
+
+### 自带 FFmpeg（可选）
+
+把 `ffmpeg.exe` 和 `ffprobe.exe` 放进 `resources/ffmpeg/`（见该目录内 README），
+执行 `package:win` 时即随安装包分发，并在运行时优先于 `PATH` 使用。目录留空时
+打包照常成功，应用回退到环境变量 / 设置面板 / `PATH`，行为与之前一致。二进制
+不入库（gitignore），仅提交 README 以锚定目录存在。
 
 ## 开发运行
 

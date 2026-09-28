@@ -28,7 +28,17 @@ hosts the desktop app and its transcoding engine only.
 
 - Node.js >= 22
 - FFmpeg + FFprobe available via `FFMPEG_PATH` / `FFPROBE_PATH`, or on `PATH`
-  (resolution order: `FFMPEG_PATH` → `FFMPEG_BINARY` → `PATH`)
+  (resolution order: Settings-panel custom path → `FFMPEG_PATH`/`FFMPEG_BINARY`
+  → bundled `resources/ffmpeg/` → `PATH`)
+
+### Bundled FFmpeg (optional)
+
+Drop `ffmpeg.exe` and `ffprobe.exe` into `resources/ffmpeg/` (see its README)
+and they are shipped inside the Windows package via `package:win`, taking
+priority over `PATH` at runtime. Leave the directory empty and packaging still
+succeeds — the app falls back to env vars / Settings / `PATH` as before. The
+binaries are git-ignored; only the README is committed to keep the directory
+alive.
 
 ## Development
 
