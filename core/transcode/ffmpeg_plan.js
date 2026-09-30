@@ -5,7 +5,7 @@
  * 不触碰文件系统、不执行进程、不修改 entry 之外的任何状态。
  */
 import path from "path"
-import mm from "music-metadata"
+import { parseFile as mmParseFile } from "music-metadata"
 
 import * as core from "../lib/core.js"
 import * as helper from "../lib/helper.js"
@@ -138,7 +138,7 @@ function getEntryShowInfo(entry) {
  */
 async function readMusicMeta(entry) {
     try {
-        const mt = await mm.parseFile(entry.path, { skipCovers: true })
+        const mt = await mmParseFile(entry.path, { skipCovers: true })
         if (mt?.format && mt.common) {
             log.info(
                 "Metadata",
