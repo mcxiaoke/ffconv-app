@@ -323,6 +323,35 @@ export function nvencSupportOf(generation, codecFamily, format) {
 /** 进程内缓存：探测一次即可 */
 let cachedGpus = null
 
+/** si.graphics() 的超时（正常 < 2s；驱动异常时可能长时间挂起） */
+const GPU_PROBE_TIMEOUT_MS = 5000
+
+/**
+ * 给 promise 加超时。超时后 reject，由调用方现有的 try/catch 降级为 []。
+ * 用 Promise.race 而非 AbortSignal：si.graphics() 不接受 signal，
+ * 我们无法真正中断 WMI 调用，但可以不再**等待**它（游离的 promise 自行结束）。
+ *
+ * @template T
+ * @param {Promise<T>} p
+ * @param {number} ms
+ * @returns {Promise<T>}
+ */
+function withTimeout(p, ms) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`GPU probe timed out after ${ms}ms`)), ms)
+        p.then(
+            (v) => {
+                clearTimeout(timer)
+                resolve(v)
+            },
+            (e) => {
+                clearTimeout(timer)
+                reject(e)
+            },
+        )
+    })
+}
+
 /**
  * 探测本机 GPU 列表
  *
@@ -340,7 +369,12 @@ export async function detectGpus(force = false) {
     if (cachedGpus && !force) return cachedGpus
     try {
         const si = await import("systeminformation").then((m) => m.default ?? m)
-        const info = await si.graphics()
+        // ⚠️ 必须给超时：Windows 下 si.graphics() 会走 WMI/PowerShell 查 GPU，
+        // 驱动异常/设备管理器卡住的机器上可能长时间不返回。它与 ffmpeg 的静态探测
+        // 在同一个 Promise.all 里，任一挂死都会让 detectHardwareCapabilities 永不
+        // settle，进而把主进程（ENV_GET / stageInputs / createPlan）一起卡死。
+        // GPU 信息只是展示与层选择的辅助，拿不到就降级为 []，不应阻塞主流程。
+        const info = await withTimeout(si.graphics(), GPU_PROBE_TIMEOUT_MS)
         // info.controllers 每项：{ vendor, model, vram, bus, driverVersion, ... }
         const gpus = (info.controllers || [])
             .map((c, idx) => {

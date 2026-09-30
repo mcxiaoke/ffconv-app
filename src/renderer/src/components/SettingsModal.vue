@@ -56,24 +56,9 @@ async function saveSettings() {
   const ffprobeVal = customFfprobe.value.trim()
   const mediainfoVal = customMediainfo.value.trim()
 
-  if (ffmpegVal) {
-    localStorage.setItem("mediac_tool_ffmpeg", ffmpegVal)
-  } else {
-    localStorage.removeItem("mediac_tool_ffmpeg")
-  }
-
-  if (ffprobeVal) {
-    localStorage.setItem("mediac_tool_ffprobe", ffprobeVal)
-  } else {
-    localStorage.removeItem("mediac_tool_ffprobe")
-  }
-
-  if (mediainfoVal) {
-    localStorage.setItem("mediac_tool_mediainfo", mediainfoVal)
-  } else {
-    localStorage.removeItem("mediac_tool_mediainfo")
-  }
-
+  // ⚠️ 先让主进程校验并应用，成功后再落 localStorage。
+  // 反过来（先存后校验）会在路径不存在时留下一个"已保存"的坏配置：
+  // 下次启动 onMounted 恢复它、再次失败，用户以为设置生效了其实一直没生效。
   try {
     if (window.api?.setCustomToolPaths) {
       await window.api.setCustomToolPaths({
@@ -84,13 +69,25 @@ async function saveSettings() {
       await envStore.fetchEnv()
     }
   } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err)
     console.error("setCustomToolPaths error:", err)
     logStore.append({
-      level: "WARN",
-      message: `更新外部工具路径失败: ${err instanceof Error ? err.message : String(err)}`,
+      level: "ERROR",
+      message: `更新外部工具路径失败: ${msg}`,
       timestamp: new Date().toLocaleTimeString(),
     })
+    alert(`更新外部工具路径失败：\n${msg}`)
+    // 保持弹窗打开，让用户能看到自己填的路径并修正
+    return
   }
+
+  // 校验通过后再持久化
+  if (ffmpegVal) localStorage.setItem("mediac_tool_ffmpeg", ffmpegVal)
+  else localStorage.removeItem("mediac_tool_ffmpeg")
+  if (ffprobeVal) localStorage.setItem("mediac_tool_ffprobe", ffprobeVal)
+  else localStorage.removeItem("mediac_tool_ffprobe")
+  if (mediainfoVal) localStorage.setItem("mediac_tool_mediainfo", mediainfoVal)
+  else localStorage.removeItem("mediac_tool_mediainfo")
 
   emit("close")
 }
@@ -105,17 +102,16 @@ function toggleAdvSwitch(key: "override" | "anime" | "strict") {
 
 function handleDeleteSourceToggle() {
   if (!configStore.adv.deleteSource) {
-    const ok = window.confirm(
-      "【高危确认】转码成功且产物校验通过后，源文件将被移入 Mediac 安全回收目录（~/.mediac/deleted/日期），可随时恢复。请确认是否开启？"
-    )
-    if (ok) {
-      configStore.adv.deleteSource = true
-      logStore.append({
-        level: "WARN",
-        message: "已启用高危选项：转码后自动删除源文件（移入安全回收目录）",
-        timestamp: new Date().toLocaleTimeString(),
-      })
-    }
+    // 这里**不再**弹确认框：真正的用户确认已由主进程在「生成计划」时用原生对话框完成
+    // （且那是不可绕过的判定点）。此处再弹一次就成了同一动作连问两遍的冗余摩擦，
+    // 而且渲染层的确认并不决定任何事 —— 删源与否取决于主进程那次原生确认。
+    // 开关本身只表达意图，勾选时给出明确告警即可。
+    configStore.adv.deleteSource = true
+    logStore.append({
+      level: "WARN",
+      message: "已启用高危选项：转码后自动删除源文件（移入安全回收目录）。生成计划时还会再确认一次。",
+      timestamp: new Date().toLocaleTimeString(),
+    })
   } else {
     configStore.adv.deleteSource = false
     logStore.append({

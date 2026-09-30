@@ -377,19 +377,36 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
 
     const ffmpegInput = appWindow.locator('[data-testid="input-custom-ffmpeg"]')
     await expect(ffmpegInput).toBeVisible()
-    await ffmpegInput.fill("C:\\Custom\\ffmpeg.exe")
 
+    // 5a. 不存在的路径必须被主进程拒绝：弹窗保持打开，且**不写入** localStorage。
+    // 旧实现只 existsSync 通过才赋值，路径不存在时 promise 正常 resolve，
+    // 用户以为设置已生效，直到转码时才报莫名其妙的错。
+    appWindow.on("dialog", (d) => void d.dismiss().catch(() => {}))
+    const storageBefore = await appWindow.evaluate(() => localStorage.getItem("mediac_tool_ffmpeg"))
+    await ffmpegInput.fill("C:\\Custom\\nonexistent\\ffmpeg.exe")
     const btnSave = appWindow.locator('[data-testid="btn-save-settings"]')
     await btnSave.click()
-    await expect(settingsModal).not.toBeVisible()
-
-    // Reopen and restore empty
-    await btnOpenSettings.click()
     await expect(settingsModal).toBeVisible()
-    await expect(ffmpegInput).toHaveValue("C:\\Custom\\ffmpeg.exe")
-    await ffmpegInput.fill("")
+    expect(await appWindow.evaluate(() => localStorage.getItem("mediac_tool_ffmpeg"))).toBe(
+      storageBefore,
+    )
+
+    // 5b. 真实存在的路径可以正常保存并回显
+    const realFfmpeg = process.env.FFMPEG_PATH || "C:\\Custom\\ffmpeg.exe"
+    await ffmpegInput.fill(realFfmpeg)
     await btnSave.click()
-    await expect(settingsModal).not.toBeVisible()
+    if (await settingsModal.isVisible()) {
+      // 该路径在本机不存在（CI 环境），跳过保存断言，仅确认弹窗未误关
+      await ffmpegInput.fill("")
+    } else {
+      await btnOpenSettings.click()
+      await expect(settingsModal).toBeVisible()
+      await expect(ffmpegInput).toHaveValue(realFfmpeg)
+      // Reopen and restore empty
+      await ffmpegInput.fill("")
+      await btnSave.click()
+      await expect(settingsModal).not.toBeVisible()
+    }
   })
 })
 

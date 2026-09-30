@@ -34,6 +34,45 @@ let cachedCapabilities = null
 // 避免 prepare 阶段多任务同时触发重复探测（探测要跑多个 execa，开销大）
 let capabilitiesPromise = null
 
+/**
+ * 静态能力探测（-version/-encoders/-hwaccels/-filters）的超时。
+ * 这四条都是「打印一行列表就退出」的本地命令，正常耗时 < 1s；
+ * 给 8s 足够宽松，又能让卡死的二进制不至于永久挂起主进程。
+ */
+const STATIC_PROBE_TIMEOUT_MS = 8000
+
+/**
+ * 给探测 promise 加"不再等待"的上限。
+ *
+ * ⚠️ 只传 execa 的 `timeout` 并不够（Windows 实测）：execa 超时后会 kill 掉
+ * 直接子进程，但若被执行的脚本又派生了孙进程（.cmd 里的 ping / 包装器），
+ * 子孙仍持有 stdout 管道，execa 会一直等管道关闭 —— 实测 timeout=8000
+ * 实际在 **60 秒**后才 settle（加 `cleanup: true` 亦然）。
+ * 因此这里用 Promise.race 主动放弃等待：超时即以空结果继续，
+ * 让能力探测降级而不是把主进程（ENV_GET / stageInputs / createPlan）一起卡死。
+ *
+ * @template T
+ * @param {Promise<T>} p
+ * @param {number} ms
+ * @param {T} fallback 超时后使用的降级值
+ * @returns {Promise<T>}
+ */
+function settleWithin(p, ms, fallback) {
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(fallback), ms)
+        p.then(
+            (v) => {
+                clearTimeout(timer)
+                resolve(v)
+            },
+            () => {
+                clearTimeout(timer)
+                resolve(fallback)
+            },
+        )
+    })
+}
+
 /** 各层对应的「可用性指纹」编码器 */
 const TIER_ENCODER_PROBE = {
     cuda: ["h264_nvenc", "hevc_nvenc"],
@@ -215,23 +254,30 @@ async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, f
 
     // 1. 静态能力：一次性拉取 version / encoders / hwaccels / filters；
     //    同时并行探测 GPU 列表（失败降级，不影响 ffmpeg 侧探测，见 detectGpus）
+    //
+    // ⚠️ 每个探测都必须有"不再等待"的上限（见 settleWithin 的注释：execa 的
+    // timeout 在 Windows 上对派生孙进程无效，实测 8s 的 timeout 要 60s 才 settle）。
+    // 这四个调用在主进程是**启动必经路径**（ENV_GET → stageInputs → createPlan）：
+    // 一旦 ffmpeg 位于网络盘、被杀软挂起、或 shim 损坏导致进程不退出，探测会长时间
+    // 挂住 —— createPlan 停在 PLANNING、isExecuting() 恒为真，reload 被永久禁止、
+    // 计划与执行全部抛错，应用只能杀进程。
+    // 超时以空 stdout 降级：解析不出编码器 → 各层 staticOk 为 false → 走 cpu 兜底，
+    // 功能可用性优先于「探测必须成功」。
+    const probe = (args) =>
+        settleWithin(
+            execa(bin, args, {
+                reject: false,
+                timeout: STATIC_PROBE_TIMEOUT_MS,
+                ...(signal ? { cancelSignal: signal } : {}),
+            }),
+            STATIC_PROBE_TIMEOUT_MS,
+            { stdout: "", failed: true, timedOut: true },
+        )
     const [verRes, encRes, hwRes, fltRes, gpus] = await Promise.all([
-        execa(bin, ["-hide_banner", "-version"], {
-            reject: false,
-            ...(signal ? { cancelSignal: signal } : {}),
-        }),
-        execa(bin, ["-hide_banner", "-v", "error", "-encoders"], {
-            reject: false,
-            ...(signal ? { cancelSignal: signal } : {}),
-        }),
-        execa(bin, ["-hide_banner", "-v", "error", "-hwaccels"], {
-            reject: false,
-            ...(signal ? { cancelSignal: signal } : {}),
-        }),
-        execa(bin, ["-hide_banner", "-v", "error", "-filters"], {
-            reject: false,
-            ...(signal ? { cancelSignal: signal } : {}),
-        }),
+        probe(["-hide_banner", "-version"]),
+        probe(["-hide_banner", "-v", "error", "-encoders"]),
+        probe(["-hide_banner", "-v", "error", "-hwaccels"]),
+        probe(["-hide_banner", "-v", "error", "-filters"]),
         detectGpus(),
     ])
     const { version, configuration } = parseVersionInfo(verRes.stdout)

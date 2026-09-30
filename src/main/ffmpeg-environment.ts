@@ -17,6 +17,15 @@ export interface FfmpegEnvironmentDeps {
   getAppPath: () => string
 }
 
+/** 环境层降级/异常的统一出口（与 main/index.ts 的 startupLog 同风格，避免在此 import electron） */
+function logStartup(message: string): void {
+  try {
+    console.warn(`[ffmpeg-env] ${message}`)
+  } catch {
+    // 日志失败不得掩盖原始问题
+  }
+}
+
 /**
  * detectHardwareCapabilities 的返回形状。
  * JS 侧没有导出的类型，这里只声明桌面端**实际消费**的字段（其余走索引签名）。
@@ -44,6 +53,8 @@ export class FfmpegEnvironment {
   /** ffprobe 版本标识（首行 `ffprobe version <x>`），只探测一次 */
   private ffprobeVersion: string | null = null
   private hardware: HardwareCapabilities | null = null
+  /** 分层预设是否已加载（只与磁盘 YAML 有关，进程内一次即可） */
+  private presetsLoaded = false
   private readonly getAppPath: () => string
 
   constructor(deps: FfmpegEnvironmentDeps) {
@@ -80,14 +91,18 @@ export class FfmpegEnvironment {
 
     let changed = false
 
+    // ⚠️ 路径不存在时必须**报错**，不能静默忽略。
+    // 旧实现只 existsSync 通过才赋值，不通过就什么都不做：promise 正常 resolve，
+    // 设置面板刷新后仍显示旧路径，用户以为已生效，直到转码时才报莫名其妙的错。
     if (rawFfmpeg) {
-      if (existsSync(rawFfmpeg)) {
-        this.customFfmpegPath = rawFfmpeg
-        this.ffmpegPath = rawFfmpeg
-        setFFmpegPath(rawFfmpeg)
-        this.hardware = null
-        changed = true
+      if (!existsSync(rawFfmpeg)) {
+        throw new Error(`ffmpeg 路径不存在: ${rawFfmpeg}`)
       }
+      this.customFfmpegPath = rawFfmpeg
+      this.ffmpegPath = rawFfmpeg
+      setFFmpegPath(rawFfmpeg)
+      this.hardware = null
+      changed = true
     } else if (this.customFfmpegPath) {
       this.customFfmpegPath = null
       this.ffmpegPath = null
@@ -96,13 +111,14 @@ export class FfmpegEnvironment {
     }
 
     if (rawFfprobe) {
-      if (existsSync(rawFfprobe)) {
-        this.customFfprobePath = rawFfprobe
-        this.ffprobePath = rawFfprobe
-        // 换了二进制就要重新读版本，否则面板会显示旧版本
-        this.ffprobeVersion = null
-        changed = true
+      if (!existsSync(rawFfprobe)) {
+        throw new Error(`ffprobe 路径不存在: ${rawFfprobe}`)
       }
+      this.customFfprobePath = rawFfprobe
+      this.ffprobePath = rawFfprobe
+      // 换了二进制就要重新读版本，否则面板会显示旧版本
+      this.ffprobeVersion = null
+      changed = true
     } else if (this.customFfprobePath) {
       this.customFfprobePath = null
       this.ffprobePath = null
@@ -112,9 +128,10 @@ export class FfmpegEnvironment {
 
     // mediainfo 只作 ffprobe 失败后的兜底探测，不参与能力探测，故不置 changed
     if (rawMediainfo) {
-      if (existsSync(rawMediainfo)) {
-        this.customMediainfoPath = rawMediainfo
+      if (!existsSync(rawMediainfo)) {
+        throw new Error(`mediainfo 路径不存在: ${rawMediainfo}`)
       }
+      this.customMediainfoPath = rawMediainfo
     } else if (this.customMediainfoPath) {
       this.customMediainfoPath = null
     }
@@ -198,6 +215,16 @@ export class FfmpegEnvironment {
     if (!this.ffmpegPath) {
       this.ffmpegPath = await resolveFFmpegBinary({ extraCandidates: this.bundledFfmpegCandidates() })
       if (this.ffmpegPath) setFFmpegPath(this.ffmpegPath)
+    } else if (!existsSync(this.ffmpegPath)) {
+      // ⚠️ 非自定义路径此前**从不校验存在性**（只在为 null 时解析一次）：
+      // 用户卸载 ffmpeg、拔掉移动盘、或被杀软隔离后，this.ffmpegPath 仍是死路径，
+      // 于是「未找到 ffmpeg」的友好提示不会触发，直接拿 ENOENT 去跑。
+      // 自定义路径每次都 existsSync，这里对非自定义路径做同样的校验。
+      logStartup(`cached ffmpeg path no longer exists, re-resolving: ${this.ffmpegPath}`)
+      this.ffmpegPath = null
+      this.hardware = null
+      this.ffmpegPath = await resolveFFmpegBinary({ extraCandidates: this.bundledFfmpegCandidates() })
+      if (this.ffmpegPath) setFFmpegPath(this.ffmpegPath)
     }
     return this.ffmpegPath
   }
@@ -209,10 +236,28 @@ export class FfmpegEnvironment {
       this.ffprobePath = this.customFfprobePath
     } else if (!this.ffprobePath) {
       this.ffprobePath = await resolveFFprobeBinary(this.ffmpegPath || undefined)
+    } else if (!existsSync(this.ffprobePath)) {
+      // 同 ensureFfmpegPath：缓存的 ffprobe 失效后必须重新解析
+      logStartup(`cached ffprobe path no longer exists, re-resolving: ${this.ffprobePath}`)
+      this.ffprobePath = await resolveFFprobeBinary(this.ffmpegPath || undefined)
     }
-    const presetPath = this.resolvePresetPath()
-    if (!presetPath) throw new Error("Bundled FFmpeg preset file was not found")
-    await presets.initPresetsAsync(presetPath)
+    // ⚠️ 不能把内置 default.yaml 当 customPath 传：
+    // loadPresetLayers(customPath) 的语义是「**只**加载这一个文件」，
+    // 于是 USER_SEARCH_PATHS（~/.mediac/presets.yaml、cwd/presets.yaml）
+    // 永远用不上 —— GUI 用户在用户层加的预设/覆盖被静默忽略，
+    // 而 loader 与 initPresetsAsync 的注释都宣称支持三层。
+    // 正确做法是不传 customPath，让它走完整分层；内置层由 DEFAULT_PRESET_PATH
+    // 自行定位。这里只在"内置文件确实找不到"时才抛错。
+    if (!presets.getAllNames().length) {
+      const presetPath = this.resolvePresetPath()
+      if (!presetPath) throw new Error("Bundled FFmpeg preset file was not found")
+      logStartup(`presets: bundled default not found at ${presetPath}; relying on layered search`)
+    }
+    // 分层结果只与磁盘上的 YAML 有关，进程内只需加载一次
+    if (!this.presetsLoaded) {
+      await presets.initPresetsAsync()
+      this.presetsLoaded = true
+    }
     if (this.ffmpegPath && !this.hardware) {
       // detectHardwareCapabilities 的 JSDoc 只声明 `Promise<object>`，按其文档形状断言
       this.hardware = (await detectHardwareCapabilities({
