@@ -4,12 +4,23 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { transcodeService } from "./ffmpeg-service.js"
 import { toSerializable } from "./ipc-serializer.js"
-import { openPath, showItemInFolder, showNotification } from "./native.js"
+import { openPath, showItemInFolder, showNotification, writeClipboardText } from "./native.js"
 import { IPC_CHANNELS, MENU_ACTIONS, MENU_ACTION_CHANNEL } from "../shared/ipc-channels.js"
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
+}
+
+// Windows 上必须设置 AppUserModelID，否则 Notification 走「无名」身份，
+// Windows 通知中心不显示/不关联到本应用（转码完成通知会静默不弹）。
+// 需在 app ready 之前设置。
+if (process.platform === "win32") {
+  try {
+    app.setAppUserModelId("com.mediac.desktop")
+  } catch {
+    // 旧版本 Electron 可能不支持；忽略即可
+  }
 }
 
 function summaryFfmpegPath() {
@@ -31,15 +42,20 @@ function sendMenuAction(window: BrowserWindow, action: (typeof MENU_ACTIONS)[key
  * 宁可明确提示，也不让界面状态与实际执行脱钩。
  */
 function guardReload(window: BrowserWindow): boolean {
-  if (!transcodeService.isExecuting()) return true
+  // 用 isBusy()（含 PLANNING）而非 isExecuting()：规划期间 reload 同样会让
+  // 界面与主进程脱钩（计划会被丢弃），提示文案也需区分。
+  if (!transcodeService.isBusy()) return true
+  const planning = transcodeService.getStatus() === "PLANNING"
   dialog.showMessageBoxSync(window, {
     type: "warning",
     buttons: ["知道了"],
     defaultId: 0,
     cancelId: 0,
     title: "无法重新加载",
-    message: "转码任务正在进行中，无法重新加载界面。",
-    detail: "重新加载会让界面与实际执行脱钩（进度丢失、无法终止）。请先「终止转码」或等待本批次完成。",
+    message: planning ? "正在生成转码计划，无法重新加载界面。" : "转码任务正在进行中，无法重新加载界面。",
+    detail: planning
+      ? "重新加载会丢弃正在构建的计划。请稍候片刻再试。"
+      : "重新加载会让界面与实际执行脱钩（进度丢失、无法终止）。请先「终止转码」或等待本批次完成。",
   })
   return false
 }
@@ -343,17 +359,53 @@ function createWindow() {
 }
 
 app.on("second-instance", () => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+  // 首实例可能已经没有窗口（macOS 常见；Windows 上窗口被关但进程因单实例锁仍在），
+  // 此时只 focus 什么都不会发生，第二个实例又直接退出，用户看不到任何东西。
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
   }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+})
+
+/**
+ * 「转码后删除源文件」的确认由**主进程**用原生对话框完成。
+ *
+ * 此前确认发生在渲染层（window.confirm），主进程只校验渲染层回传的一个布尔位，
+ * 还额外接受 `options.autoConfirm` 作为旁路 —— 等于这道不可撤销操作的安全门
+ * 由信任度最低的一方自行声明通过，渲染层一旦被攻破即可无交互删源。
+ * 现在渲染层只表达意图，判定权与对话框都在主进程。
+ */
+transcodeService.setDeleteSourceConfirmer(async () => {
+  const options: Electron.MessageBoxOptions = {
+    type: "warning",
+    buttons: ["取消", "确认删除源文件"],
+    defaultId: 0,
+    cancelId: 0,
+    title: "高危操作确认",
+    message: "转码成功后将删除源文件",
+    detail:
+      "源文件会被移入 Mediac 安全回收目录（~/.mediac/deleted/日期），可随时恢复。\n" +
+      "该操作不可撤销地影响原始素材，确定继续吗？",
+    noLink: true,
+  }
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const result = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options)
+  return result.response === 1
 })
 
 handleTrusted(IPC_CHANNELS.APP_GET_VERSION, () => app.getVersion())
 handleTrusted(IPC_CHANNELS.ENV_GET, () => transcodeService.getSummary())
 handleTrusted(IPC_CHANNELS.ENV_SET_CUSTOM_PATHS, async (payload: unknown) => {
   if (!payload || typeof payload !== "object") throw new Error("Invalid tool paths payload")
-  return transcodeService.setCustomToolPaths(payload as { ffmpeg?: string; ffprobe?: string })
+  return transcodeService.setCustomToolPaths(payload as {
+    ffmpeg?: string
+    ffprobe?: string
+    mediainfo?: string
+  })
 })
 handleTrusted(IPC_CHANNELS.STAGE_INPUTS, async (paths: unknown) => {
   if (!Array.isArray(paths)) throw new Error("paths must be an array of strings")
@@ -388,7 +440,7 @@ handleTrusted(IPC_CHANNELS.SYSTEM_SHOW_IN_FOLDER, async (fullPath: unknown) => {
   if (!transcodeService.isKnownMediaPath(fullPath)) {
     throw new Error("Path is not recognized by the main process")
   }
-  showItemInFolder(fullPath)
+  return showItemInFolder(fullPath)
 })
 handleTrusted(IPC_CHANNELS.SYSTEM_OPEN_PATH, async (fullPath: unknown) => {
   if (typeof fullPath !== "string") throw new Error("fullPath must be a string")
@@ -396,6 +448,15 @@ handleTrusted(IPC_CHANNELS.SYSTEM_OPEN_PATH, async (fullPath: unknown) => {
     throw new Error("Path is not recognized by the main process")
   }
   return openPath(fullPath)
+})
+// 剪贴板必须由主进程写入：沙箱 preload 的 require("electron") 不暴露 clipboard。
+handleTrusted(IPC_CHANNELS.SYSTEM_COPY_TEXT, (text: unknown) => {
+  if (typeof text !== "string") throw new Error("text must be a string")
+  // 单条复制内容上限保护：ffmpeg 预览命令/整份日志可能很大
+  if (text.length > 2_000_000) {
+    return writeClipboardText(text.slice(0, 2_000_000))
+  }
+  return writeClipboardText(text)
 })
 handleTrusted(IPC_CHANNELS.SYSTEM_NOTIFY, async (payload: unknown) => {
   const p = payload as { title?: string; body?: string }
@@ -439,6 +500,10 @@ app.whenReady()
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false)
     })
+    // 同步权限检查走的是另一个 handler：navigator.permissions.query /
+    // Notification.requestPermission 的 check 路径不被上面的 request handler 覆盖，
+    // 不设它渲染层仍可探测权限状态。
+    session.defaultSession.setPermissionCheckHandler(() => false)
   })
   .catch((error) => {
     startupLog(`app ready error: ${error.stack || error}`)

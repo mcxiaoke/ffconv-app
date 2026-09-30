@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer, webUtils, clipboard } from "electron"
-import { IPC_CHANNELS } from "../shared/ipc-channels.js"
+import { contextBridge, ipcRenderer, webUtils } from "electron"
+import { IPC_CHANNELS, MENU_ACTION_CHANNEL } from "../shared/ipc-channels.js"
 import type { DesktopApi, EngineEvent } from "../shared/contracts.js"
 
 function safeClone<T>(val: T): T {
@@ -60,20 +60,22 @@ const api: DesktopApi = {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_PATH, fullPath)
   },
   copyText(text: string) {
-    try {
-      clipboard.writeText(text)
-      return Promise.resolve(true)
-    } catch {
-      return Promise.resolve(false)
-    }
+    // ⚠️ 不能在 preload 里直接用 electron 的 clipboard：主进程开了 sandbox:true，
+    // 沙箱 preload 的 require("electron") 只暴露白名单模块，clipboard 不在其中
+    // （实测为 undefined，调用即抛 "Cannot read properties of undefined"）。
+    // 旧实现在这里 try/catch 吞掉异常并返回 false，而渲染层的兜底分支是
+    // `if (window.api?.copyText) {...} else { navigator.clipboard... }`，
+    // copyText 永远存在 → 兜底永不执行 → 点了"复制"毫无反应。
+    // 改走 IPC 交主进程写入。
+    return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_COPY_TEXT, String(text ?? ""))
   },
   notify(title, body) {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_NOTIFY, safeClone({ title, body }))
   },
   onMenuAction(callback) {
     const listener = (_event: unknown, action: string) => callback(action)
-    ipcRenderer.on("menu:action", listener)
-    return () => ipcRenderer.removeListener("menu:action", listener)
+    ipcRenderer.on(MENU_ACTION_CHANNEL, listener)
+    return () => ipcRenderer.removeListener(MENU_ACTION_CHANNEL, listener)
   },
 }
 

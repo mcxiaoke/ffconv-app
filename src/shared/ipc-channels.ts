@@ -37,6 +37,7 @@ export const IPC_CHANNELS = {
   SYSTEM_SHOW_IN_FOLDER: "system:show-in-folder",
   SYSTEM_OPEN_PATH: "system:open-path",
   SYSTEM_NOTIFY: "system:notify",
+  SYSTEM_COPY_TEXT: "system:copy-text",
   ENV_SET_CUSTOM_PATHS: "env:set-custom-paths",
 } as const
 

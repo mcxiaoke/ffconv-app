@@ -84,17 +84,13 @@ async function createPlanInternal() {
   if (configStore.inputs.length === 0) {
     throw new Error("请先添加至少一个媒体文件或目录")
   }
-  // 主进程会校验 deleteSourceConfirmed；必须让它反映本次弹窗的真实确认结果，
-  // 而非直接复用 deleteSource 开关状态（否则校验形同虚设）
-  let deleteSourceAck = false
-  if (configStore.adv.deleteSource) {
-    const ok = window.confirm(
-      "【高危确认】转码成功且产物校验通过后，源文件将被移入 Mediac 安全回收目录（~/.mediac/deleted/日期），可随时恢复。请确认是否继续？"
-    )
-    if (!ok) {
-      throw new Error("用户取消了高危删除确认")
-    }
-    deleteSourceAck = true
+  // 「转码后删除源文件」的确认由**主进程**弹原生对话框完成。
+  // 渲染层只表达意图（deleteSourceFiles），不再自行 confirm 也不回传确认位 ——
+  // 否则这道不可撤销操作的安全门由信任度最低的一方自行声明通过。
+  // 用户在原生框点「取消」时主进程会抛「用户取消了删除源文件确认」，
+  // 由 createPlan 的 catch 识别为正常取消（不是失败）。
+  if (configStore.inputs.length === 0) {
+    throw new Error("请先添加至少一个媒体文件或目录")
   }
 
   planStore.status = "PLANNING"
@@ -128,7 +124,6 @@ async function createPlanInternal() {
       anime: configStore.adv.anime,
       strict: configStore.adv.strict,
       deleteSourceFiles: configStore.adv.deleteSource,
-      deleteSourceConfirmed: deleteSourceAck,
     },
   }))
   const plan = await window.api.createPlan(payload)
@@ -156,8 +151,19 @@ async function createPlan() {
     await createPlanInternal()
     planStore.restoreSelectionByPaths(knownPreviousPaths, selectedPaths)
   } catch (error: unknown) {
-    planStore.status = "FAILED"
     const msg = error instanceof Error ? error.message : String(error)
+    // 用户在原生确认框点了「取消」是**正常取消**，不是失败：
+    // 不能把状态打成 FAILED（红色「异常」标签）并弹出「生成计划失败」。
+    if (msg.includes("取消了删除源文件确认")) {
+      planStore.status = "READY"
+      logStore.append({
+        level: "INFO",
+        message: "已取消：未启用「转码后删除源文件」，计划未生成。",
+        timestamp: new Date().toLocaleTimeString(),
+      })
+      return
+    }
+    planStore.status = "FAILED"
     alert(`生成计划失败: ${msg}`)
     logStore.append({
       level: "ERROR",
@@ -192,8 +198,18 @@ async function startExecution(options?: { dryRun?: boolean }) {
       await createPlanInternal()
       planStore.restoreSelectionByPaths(knownPreviousPaths, selectedPaths)
     } catch (err: unknown) {
-      planStore.status = "FAILED"
       const msg = err instanceof Error ? err.message : String(err)
+      // 同 createPlan：取消高危确认是正常取消，不算失败
+      if (msg.includes("取消了删除源文件确认")) {
+        planStore.status = "READY"
+        logStore.append({
+          level: "INFO",
+          message: "已取消：未启用「转码后删除源文件」，未开始转码。",
+          timestamp: new Date().toLocaleTimeString(),
+        })
+        return
+      }
+      planStore.status = "FAILED"
       logStore.append({
         level: "ERROR",
         message: `准备转码失败: ${msg}`,

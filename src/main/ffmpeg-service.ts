@@ -126,6 +126,18 @@ class DesktopTranscodeService {
    */
   private progressThrottleMap = new Map<string, number>()
 
+  /**
+   * 「转码后删除源文件」的用户确认钩子，由 main/index.ts 注入原生对话框实现。
+   * 未注入时一律视为未确认（fail-closed）：宁可拒绝执行不可撤销操作。
+   */
+  private confirmDeleteSource: (options: Record<string, unknown>) => Promise<boolean> =
+    async () => false
+
+  /** 由主进程注入原生确认框（见 main/index.ts） */
+  setDeleteSourceConfirmer(fn: (options: Record<string, unknown>) => Promise<boolean>): void {
+    this.confirmDeleteSource = fn
+  }
+
   constructor() {
     const userData = app.getPath("userData")
     this.environment = new FfmpegEnvironment({ getAppPath: () => app.getAppPath() })
@@ -182,8 +194,20 @@ class DesktopTranscodeService {
     return this.status
   }
 
-  /** 是否有转码或计划任务正在执行中 */
+  /**
+   * 是否有**真正在写文件**的执行在进行中。
+   *
+   * 刻意不含 PLANNING：规划阶段只是并发跑 ffprobe，一个字节都没写。
+   * 若把它算进来，关窗/重载提示会误报「当前有转码任务正在进行中！
+   * 正在写入的文件可能损坏」，而此时并不存在任何写入。
+   * 需要「忙」语义（含规划）的地方用 guardBusy()。
+   */
   isExecuting(): boolean {
+    return this.status === "RUNNING" || this.status === "STOPPING"
+  }
+
+  /** 忙碌语义（含规划阶段）：用于 reload 守卫等「别打断我」的场景 */
+  isBusy(): boolean {
     return this.status === "RUNNING" || this.status === "PLANNING" || this.status === "STOPPING"
   }
 
@@ -333,6 +357,13 @@ class DesktopTranscodeService {
   }
 
   clearStagedInputs(): { ok: boolean } {
+    // 运行期清空会把 currentPlan 置空，连带打断：onSummary 的终态判定读到空数组
+    // → 一次「全部成功」被标成 STOPPED（与渲染层按 session.summary 标的
+    // COMPLETED 冲突）；onEvent 的 tasks.find 全部失配 → 任务状态永不再更新；
+    // isKnownMediaPath 丢失计划产物 → 运行中「打开输出目录」被白名单拒绝。
+    if (this.isExecuting()) {
+      return { ok: false }
+    }
     this.stagedEntries.clear()
     this.currentPlan = null
     return { ok: true }
@@ -340,6 +371,10 @@ class DesktopTranscodeService {
 
   removeStagedInputs(paths: string[]): { removed: number; totalCount: number } {
     if (!Array.isArray(paths) || paths.length === 0) {
+      return { removed: 0, totalCount: this.stagedEntries.size }
+    }
+    // 同 clearStagedInputs：运行期不允许改动输入集合
+    if (this.isExecuting()) {
       return { removed: 0, totalCount: this.stagedEntries.size }
     }
     let removed = 0
@@ -356,11 +391,16 @@ class DesktopTranscodeService {
   async createPlan(body: Record<string, unknown> = {}): Promise<PublicPlanSnapshot> {
     // RUNNING 期间不可重建；STOPPING 期间同理——此刻 abort 还在收尾，
     // 重建会清掉 currentPlan，与 stopExecution 的收尾写入互相踩踏。
-    if (this.status === "RUNNING" || this.status === "STOPPING") {
+    // PLANNING 也必须挡住：否则两次并发 PLAN_CREATE（菜单快捷键连按 + 页面按钮）
+    // 会各自跑一遍 prepareFFmpegPlan，后完成者覆盖 currentPlan，而两个 IPC
+    // 都正常 resolve，渲染层可能拿着计划 A 去 startExecution、主进程却按计划 B 过滤。
+    if (this.status === "RUNNING" || this.status === "STOPPING" || this.status === "PLANNING") {
       throw new Error(
         this.status === "RUNNING"
           ? "An execution is already running"
-          : "An execution is stopping, wait for it to settle",
+          : this.status === "PLANNING"
+            ? "A plan is already being generated"
+            : "An execution is stopping, wait for it to settle",
       )
     }
     this.status = "PLANNING"
@@ -385,12 +425,18 @@ class DesktopTranscodeService {
         timestamp: new Date().toLocaleTimeString(),
       })
 
-      if (
-        normalized.deleteSourceFiles &&
-        !normalized.deleteSourceConfirmed &&
-        !normalized.autoConfirm
-      ) {
-        throw new Error("deleteSourceFiles requires explicit confirmation")
+      if (normalized.deleteSourceFiles) {
+        // ⚠️ 确认必须由主进程自己做，不能采信渲染层传来的确认位。
+        // 旧实现接受 `options.autoConfirm`（渲染层 IPC 载荷里的一个普通布尔），
+        // 等于让「转码后删除源文件」这道不可撤销操作的安全门，由信任度最低的
+        // 一方自行声明通过 —— 渲染层一旦被攻破即可无交互删源。
+        // 现在：渲染层只表达意图（deleteSourceFiles），主进程弹**原生**确认框，
+        // 用户点「确定」才置位 deleteSourceConfirmed。渲染层不再自行确认。
+        const acknowledged = await this.confirmDeleteSource(normalized)
+        if (!acknowledged) {
+          throw new Error("用户取消了删除源文件确认")
+        }
+        normalized.deleteSourceConfirmed = true
       }
       // 记录用户选择的并发，执行阶段沿用（此前执行期硬编码 1，jobs 设置完全无效）
       this.plannedConcurrency = this.resolveConcurrency(normalized.jobs)
@@ -556,6 +602,33 @@ class DesktopTranscodeService {
     if (this.status === "RUNNING" || this.status === "PLANNING" || this.status === "STOPPING") {
       throw new Error(`Cannot start execution while in ${this.status} state`)
     }
+    // ⚠️ 状态占位必须发生在**任何 await 之前**。
+    // 此前守卫与 `this.status = "RUNNING"` 之间隔着 ensureFfmpegPath()（会走
+    // resolveFFmpegBinary 的 fs 探测），两次并发调用（双击按钮 / 快捷键双绑定 /
+    // 渲染层状态与主进程失同步）会同时穿过守卫、各自 await、各自把 status 写成
+    // RUNNING 并各 new 一个 AbortController —— 后者覆盖前者，前者的 signal 永久泄漏，
+    // 同一份 plan 跑起两个引擎并发写同一批输出文件。
+    this.status = "RUNNING"
+    const controller = new AbortController()
+    this.abortController = controller
+    try {
+      return await this.runExecutionLocked(controller, taskIds, options)
+    } catch (err) {
+      // 启动阶段失败必须把状态还回去，否则会永久卡在 RUNNING
+      // （isExecuting() 恒真 → 计划/开始全部被静默拒绝，只能杀进程）。
+      if (this.status === "RUNNING") {
+        this.status = this.currentPlan ? "READY" : "IDLE"
+      }
+      this.abortController = null
+      throw err
+    }
+  }
+
+  private async runExecutionLocked(
+    controller: AbortController,
+    taskIds?: string[],
+    options?: { dryRun?: boolean },
+  ): Promise<{ runId: string }> {
     // 未解析到 ffmpeg 时不要裸调 "ffmpeg"：那会命中 PATH 里的另一个版本，
     // 与能力探测结果不一致（探测说有编码器 -> 执行时 Unknown encoder）。
     const ffmpegPath = await this.environment.ensureFfmpegPath()
@@ -567,8 +640,11 @@ class DesktopTranscodeService {
     if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
       throw new Error("No selected tasks to execute")
     }
+    // 捕获局部引用：下面的 await 之后 TS 不再认为 this.currentPlan 非空
+    const plan = this.currentPlan
+    if (!plan) throw new Error("No active plan to execute")
 
-    const selectedTasks = this.currentPlan.tasks.filter((task) => taskIds.includes(task.id))
+    const selectedTasks = plan.tasks.filter((task) => taskIds!.includes(task.id))
     if (!selectedTasks || selectedTasks.length === 0) {
       throw new Error("No selected tasks to execute")
     }
@@ -586,6 +662,7 @@ class DesktopTranscodeService {
         timestamp: new Date().toLocaleTimeString(),
       })
       this.status = "COMPLETED"
+      this.abortController = null
       // 必须补发 session.summary：渲染层只据此事件收敛状态，直接 return 会让它
       // 永久停在点击时设的 RUNNING（按钮卡死、终止又因无 abortController 失效）。
       this.eventSink?.({
@@ -601,7 +678,7 @@ class DesktopTranscodeService {
           elapsedMs: 0,
         },
       })
-      return { runId: this.currentPlan.id }
+      return { runId: plan.id }
     }
 
     const isDryRun = !!options?.dryRun
@@ -622,24 +699,22 @@ class DesktopTranscodeService {
       dryRun: isDryRun,
     }))
 
-    // 先建立 RUNNING 状态与 abortController，再落盘 manifest：
-    //   1) 这两个 await（recoverStaleTasks / writeTaskManifest）期间用户点「终止」，
-    //      stopExecution 依赖 abortController 存在才生效；此前该窗口期内终止会被静默忽略；
-    //   2) 状态提前占位才能挡住并发二次启动（双击按钮 / 快捷键双绑定），
-    //      否则两次调用都会穿过上面的 RUNNING 守卫，同一计划跑起两个引擎。
-    this.status = "RUNNING"
-    this.abortController = new AbortController()
-    const signal = this.abortController.signal
+    // RUNNING 状态与 abortController 已在 startExecution 里、任何 await 之前占位。
+    // 下面这些 await（recoverStaleTasks / writeTaskManifest）期间用户点「终止」时，
+    // stopExecution 依赖 abortController 存在才生效，故用捕获的局部 controller 取 signal。
+    const signal = controller.signal
     try {
+      // 清理上次异常退出残留的临时产物（initialize 时已做过一次，
+      // 这里保留是为了同一进程内重试/崩溃后再执行时仍能清理）
       await this.manifest.recoverStaleTasks()
-      await this.manifest.writeTaskManifest(tasks, this.currentPlan.id)
+      await this.manifest.writeTaskManifest(tasks, plan.id)
     } catch (error) {
       this.abortController = null
       this.status = "FAILED"
       throw error
     }
-    const runId = this.currentPlan.id
-    const executionPlan = { ...this.currentPlan, tasks }
+    const runId = plan.id
+    const executionPlan = { ...plan, tasks }
 
     // 窗口期内已被终止：不再重新开启挂起抑制/重置任务栏（stopExecution 刚把它们关掉），
     // 仍照常启动引擎，由引擎的取消路径发出 session.summary，渲染层状态才能落地。
@@ -725,6 +800,13 @@ class DesktopTranscodeService {
           concurrency: this.plannedConcurrency,
           maxAttempts: 2,
           shouldRetry: ({ result }: { result?: { status?: string } }) => result?.status === "failed",
+          // ⚠️ 必须提供 confirmRetry，否则自动重试是死代码。
+          // 引擎侧判定顺序是 shouldRetry -> confirmRetry -> retryCount++，
+          // 且 confirmRetry 缺失时 safeCallAsync 返回 undefined，
+          // `if (!retryConfirmed) break` 必然成立 —— 实测 runTask 只被调用 1 次、
+          // retryCount 恒为 0，「失败自动切 CPU 模式」这条硬件场景最主要的
+          // 自愈手段从未生效过。自动重试是宿主既定策略，无需再次询问用户。
+          confirmRetry: async () => true,
           prepareAttempt: async ({
             task,
             result,
@@ -835,13 +917,27 @@ class DesktopTranscodeService {
       })
       .finally(async () => {
         this.abortController = null
+        // 兜底：引擎已结束但状态还停在 RUNNING/STOPPING（异常路径或事件丢失）时
+        // 必须落回终态，否则 isExecuting() 恒真，后续全部操作被永久拒绝。
+        if (this.status === "RUNNING" || this.status === "STOPPING") {
+          this.status = this.summary?.status === "failed" ? "FAILED" : "COMPLETED"
+        }
         await this.manifest.clearTaskManifest()
       })
     return { runId }
   }
 
   async stopExecution() {
+    // ⚠️ 必须同时校验 status，只看 abortController 存在会踩到一个窗口：
+    // onSummary 已把 status 置为 COMPLETED/STOPPED/FAILED、execute 已 resolve，
+    // 但 .finally() 尚未执行（microtask 之间）——此时 abortController 仍非 null。
+    // 用户此刻点「终止」会把 status 改写成 STOPPING，而引擎已经结束、不会再发
+    // 任何事件，.finally() 也不复位 status —— 永久死锁：isExecuting() 恒真，
+    // reload 被永久禁止、createPlan/startExecution 永远抛错，只能杀进程。
     if (!this.abortController) return { ok: false, message: "No running task to stop" }
+    if (this.status !== "RUNNING") {
+      return { ok: false, message: `Nothing to stop (current state: ${this.status})` }
+    }
     this.status = "STOPPING"
     this.abortController.abort()
     this.killTrackedProcessesAsync()
