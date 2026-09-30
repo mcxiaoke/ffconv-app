@@ -2,10 +2,12 @@
 import { computed, ref } from "vue"
 import { usePlanStore } from "../stores/plan"
 import { useConfigStore } from "../stores/config"
+import { useLogStore } from "../stores/log"
 import { formatSize, formatDuration, highlightFfmpegCmd } from "../utils/format"
 
 const plan = usePlanStore()
 const config = useConfigStore()
+const logStore = useLogStore()
 
 const task = computed(() => plan.inspectedTask)
 const copiedCmd = ref(false)
@@ -114,12 +116,36 @@ function close() {
   plan.inspectedTask = null
 }
 
+/**
+ * 复制到剪贴板，并据实际结果反馈。
+ *
+ * ⚠️ 此前无论成功与否都设 `copied = true`，复制失败时按钮照样显示「已复制」。
+ * 现在主进程返回布尔值，失败时给出错误提示而不是假装成功。
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (window.api?.copyText) {
+      const ok = await window.api.copyText(text)
+      if (ok === false) return false
+      return true
+    }
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (err) {
+    console.error("Clipboard copy failed:", err)
+    return false
+  }
+}
+
 async function copyCmd() {
   if (!cmdString.value) return
-  if (window.api?.copyText) {
-    await window.api.copyText(cmdString.value)
-  } else {
-    await navigator.clipboard.writeText(cmdString.value)
+  if (!(await copyToClipboard(cmdString.value))) {
+    logStore.append({
+      level: "ERROR",
+      message: "复制 FFmpeg 命令失败：剪贴板不可用",
+      timestamp: new Date().toLocaleTimeString(),
+    })
+    return
   }
   copiedCmd.value = true
   setTimeout(() => { copiedCmd.value = false }, 2000)
@@ -127,10 +153,13 @@ async function copyCmd() {
 
 async function copyRaw() {
   if (!rawMetadataText.value) return
-  if (window.api?.copyText) {
-    await window.api.copyText(rawMetadataText.value)
-  } else {
-    await navigator.clipboard.writeText(rawMetadataText.value)
+  if (!(await copyToClipboard(rawMetadataText.value))) {
+    logStore.append({
+      level: "ERROR",
+      message: "复制原始元数据失败：剪贴板不可用",
+      timestamp: new Date().toLocaleTimeString(),
+    })
+    return
   }
   copiedRaw.value = true
   setTimeout(() => { copiedRaw.value = false }, 2000)
@@ -138,7 +167,13 @@ async function copyRaw() {
 
 function locateFile() {
   if (task.value?.path) {
-    window.api.showInFolder(task.value.path)
+    void window.api.showInFolder(task.value.path).catch((err: unknown) => {
+      logStore.append({
+        level: "WARN",
+        message: `在文件管理器中定位失败: ${err instanceof Error ? err.message : String(err)}`,
+        timestamp: new Date().toLocaleTimeString(),
+      })
+    })
   }
 }
 
@@ -159,15 +194,18 @@ function startResizing(e: MouseEvent) {
     drawerWidth.value = newW
   }
 
-  function onMouseUp() {
+  function stop() {
     isResizing.value = false
     localStorage.setItem("mediac_inspector_width", String(drawerWidth.value))
     window.removeEventListener("mousemove", onMouseMove)
-    window.removeEventListener("mouseup", onMouseUp)
+    window.removeEventListener("mouseup", stop)
+    // 指针在窗口外松开时收不到 mouseup，监听与 isResizing 会常驻
+    window.removeEventListener("blur", stop)
   }
 
   window.addEventListener("mousemove", onMouseMove)
-  window.addEventListener("mouseup", onMouseUp)
+  window.addEventListener("mouseup", stop)
+  window.addEventListener("blur", stop)
 }
 </script>
 

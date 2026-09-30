@@ -13,7 +13,27 @@ export const usePlanStore = defineStore("plan", () => {
   const tasks = shallowRef<PlanTask[]>([])
   const selectedIds = ref<Set<string>>(new Set())
   const activeTaskId = ref<string | null>(null)
-  const inspectedTask = ref<PlanTask | null>(null)
+  /**
+   * 被检视的任务只存 **id**，读取时从 tasks 里实时反查。
+   *
+   * 此前直接存对象引用，而 updateTaskProgress/updateTaskStatus 每次都用
+   * `{...list[idx]}` 生成**新对象**替换数组元素 —— inspectedTask 仍指向旧对象。
+   * 结果：双击任务打开抽屉后开始转码，抽屉标题栏的状态标签永远停在打开瞬间的
+   * `pending`，运行中/完成都不变；底栏「源媒体/推演目标」对比卡同样显示过期数据。
+   * 改成按 id 实时解析后，抽屉内容随任务状态一起更新；
+   * 任务被移除时反查返回 null，抽屉自然关闭。
+   */
+  const inspectedTaskId = ref<string | null>(null)
+  const inspectedTask = computed<PlanTask | null>({
+    get() {
+      const id = inspectedTaskId.value
+      if (!id) return null
+      return tasks.value.find((t) => t.id === id) ?? null
+    },
+    set(value) {
+      inspectedTaskId.value = value ? value.id : null
+    },
+  })
   const currentSpeed = ref(0)
   /**
    * 运行期配置变更的「待兑现」标记。
@@ -120,8 +140,8 @@ export const usePlanStore = defineStore("plan", () => {
     const s = new Set(selectedIds.value)
     s.delete(id)
     selectedIds.value = s
-    if (inspectedTask.value?.id === id) {
-      inspectedTask.value = null
+    if (inspectedTaskId.value === id) {
+      inspectedTaskId.value = null
     }
     if (activeTaskId.value === id) {
       activeTaskId.value = tasks.value[0]?.id || null
@@ -145,8 +165,8 @@ export const usePlanStore = defineStore("plan", () => {
       }
     }
     tasks.value = tasks.value.filter((t) => !selectedIds.value.has(t.id))
-    if (inspectedTask.value && selectedIds.value.has(inspectedTask.value.id)) {
-      inspectedTask.value = null
+    if (inspectedTaskId.value && selectedIds.value.has(inspectedTaskId.value)) {
+      inspectedTaskId.value = null
     }
     if (activeTaskId.value && selectedIds.value.has(activeTaskId.value)) {
       activeTaskId.value = tasks.value[0]?.id || null

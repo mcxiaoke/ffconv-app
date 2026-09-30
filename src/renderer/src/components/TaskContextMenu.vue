@@ -70,17 +70,28 @@ function onOpenInFolder() {
   emit("close")
 }
 
+/** 复制并据实际结果反馈：主进程返回 false 时不再谎报「已复制」 */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (window.api?.copyText) {
+      const ok = await window.api.copyText(text)
+      return ok !== false
+    }
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (err) {
+    console.error("Clipboard copy failed:", err)
+    return false
+  }
+}
+
 async function onCopyPath() {
   const p = props.task?.path
   if (p) {
-    if (window.api?.copyText) {
-      await window.api.copyText(p)
-    } else {
-      await navigator.clipboard.writeText(p)
-    }
+    const ok = await copyToClipboard(p)
     logStore.append({
-      level: "INFO",
-      message: `已复制源文件路径: ${p}`,
+      level: ok ? "INFO" : "ERROR",
+      message: ok ? `已复制源文件路径: ${p}` : "复制源文件路径失败：剪贴板不可用",
       timestamp: new Date().toLocaleTimeString(),
     })
   }
@@ -91,14 +102,10 @@ async function onCopyCmd() {
   const t = props.task
   if (t) {
     const cmd = planStore.previewCmdFor(t)
-    if (window.api?.copyText) {
-      await window.api.copyText(cmd)
-    } else {
-      await navigator.clipboard.writeText(cmd)
-    }
+    const ok = await copyToClipboard(cmd)
     logStore.append({
-      level: "INFO",
-      message: `已复制推演 FFmpeg 命令`,
+      level: ok ? "INFO" : "ERROR",
+      message: ok ? `已复制推演 FFmpeg 命令` : "复制推演 FFmpeg 命令失败：剪贴板不可用",
       timestamp: new Date().toLocaleTimeString(),
     })
   }

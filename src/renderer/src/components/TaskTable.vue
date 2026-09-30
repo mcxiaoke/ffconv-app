@@ -286,6 +286,34 @@ const selectedTask = computed(() => {
     || null
 })
 
+/**
+ * 源规格文本。
+ * ⚠️ 旧写法直接把 width/height/fps 插值进模板，而这些字段在契约里都是可选的：
+ * 元数据探测未完成（staged 任务）或缺失时会渲染成 "undefinedxundefined · undefinedfps"。
+ */
+const sourceSpecText = computed(() => {
+  const t = selectedTask.value
+  if (!t) return "未知"
+  const parts: string[] = []
+  if (t.width && t.height) parts.push(`${t.width}x${t.height}`)
+  if (t.fps) parts.push(`${t.fps}fps`)
+  return parts.length > 0 ? parts.join(" · ") : "未知"
+})
+
+/** 目标规格文本：与源规格同口径，缺项显示占位而非 undefined */
+const targetSpecText = computed(() => {
+  const t = selectedTask.value
+  if (!t) return "未知"
+  const ts = t.targetSummary
+  const w = ts?.width || t.width
+  const h = ts?.height || t.height
+  const parts: string[] = []
+  parts.push(w && h ? `${w}x${h}` : "保持源分辨率")
+  const fps = ts?.fps || t.fps
+  parts.push(fps ? `${fps}fps` : "原帧率")
+  return parts.join(" · ")
+})
+
 const selectedTaskPreview = computed(() => {
   const t = selectedTask.value
   if (!t) return null
@@ -573,14 +601,14 @@ const selectedTaskPreview = computed(() => {
         <div class="card-grid">
           <div class="card-col card-src">
             <div class="col-title">【输入源媒体】</div>
-            <div class="card-item"><span>规格：</span><b>{{ selectedTaskPreview.task.width }}x{{ selectedTaskPreview.task.height }} · {{ selectedTaskPreview.task.fps }}fps</b></div>
+            <div class="card-item"><span>规格：</span><b>{{ sourceSpecText }}</b></div>
             <div class="card-item"><span>编码：</span><b>{{ selectedTaskPreview.task.videoCodec || '未知' }} / {{ selectedTaskPreview.task.audioCodec || '未知' }}</b></div>
             <div class="card-item"><span>大小：</span><b>{{ formatSize(selectedTaskPreview.task.size) }} ({{ formatDuration(selectedTaskPreview.task.duration) }})</b></div>
             <div class="card-item truncate" :title="selectedTaskPreview.task.path"><span>路径：</span>{{ selectedTaskPreview.task.path }}</div>
           </div>
           <div class="card-col card-dst">
             <div class="col-title">【目标转码配置】</div>
-            <div class="card-item"><span>目标规格：</span><b>{{ selectedTaskPreview.task.targetSummary?.width || selectedTaskPreview.task.width || '保持源' }}x{{ selectedTaskPreview.task.targetSummary?.height || selectedTaskPreview.task.height || '' }} · {{ selectedTaskPreview.task.targetSummary?.fps || selectedTaskPreview.task.fps || '原帧率' }}fps</b></div>
+            <div class="card-item"><span>目标规格：</span><b>{{ targetSpecText }}</b></div>
             <div class="card-item"><span>目标编码：</span><b>{{ selectedTaskPreview.task.targetSummary?.videoEncoder || '自动编码' }} · {{ selectedTaskPreview.task.targetSummary?.audioCodec || 'aac' }}</b></div>
             <div class="card-item"><span>质量策略：</span><b>{{ selectedTaskPreview.task.targetSummary?.quality ? 'CRF ' + selectedTaskPreview.task.targetSummary.quality : selectedTaskPreview.task.targetSummary?.bitrate ? Math.round(selectedTaskPreview.task.targetSummary.bitrate / 1000) + 'k' : '自适应' }}</b></div>
             <div class="card-item truncate" :title="selectedTaskPreview.task.fileDst || '同源文件目录'"><span>输出路径：</span>{{ selectedTaskPreview.task.fileDst || (configStore.outputBesideSource ? '自动保存在源文件同级' : configStore.outputDir || '源文件同级') }}</div>
@@ -608,6 +636,7 @@ const selectedTaskPreview = computed(() => {
             placeholder="自定义输出目录路径…"
             :value="configStore.outputDir"
             @input="configStore.setCustomOutputDir(($event.target as HTMLInputElement).value)"
+            @change="configStore.commitCustomOutputDir(($event.target as HTMLInputElement).value)"
           />
           <button class="btn btn-sm btn-secondary" data-testid="btn-browse-dest" @click="pickOutputDir">更改…</button>
         </div>
@@ -820,7 +849,11 @@ tbody tr.dim {
   border-radius: 3px;
   font-size: 11px;
   background: var(--bg-active);
-  color: var(--text-2);
+  /* 深色主题下 --text-2(#9198a1) on --bg-active(#30363d) 实测仅 4.19:1，
+     低于 WCAG AA 正文 4.5:1（11px 属正文而非大字）。改用 --text-base
+     (#f0f6fc on #30363d ≈ 10.4:1）；浅色主题 --text-base(#1f2328 on
+     #d0d7de) 同样远高于阈值，故可统一用 --text-base。 */
+  color: var(--text-base);
   white-space: nowrap;
 }
 

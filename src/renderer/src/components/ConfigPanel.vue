@@ -202,9 +202,9 @@ async function pickOutputDir() {
   try {
     const res = await window.api.selectFiles({ mode: "directory", multiple: false })
     if (res.paths.length > 0) {
-      // 必须走 store 的 setCustomOutputDir：直接写 outputDir 会漏掉
-      // savedCustomOutputDir / outputBesideSource 的联动（TaskTable 的选择器用的是正确写法）
-      config.setCustomOutputDir(res.paths[0])
+      // 走 commitCustomOutputDir：这是「显式选定一个目录」，需要联动
+      // savedCustomOutputDir 与「保存在源文件同级」勾选（与 TaskTable 的选择器一致）
+      config.commitCustomOutputDir(res.paths[0])
       logStore.append({
         level: "INFO",
         message: `输出目录已设置为: ${res.paths[0]}`,
@@ -229,12 +229,58 @@ async function addManualPath() {
   }
 }
 
+/**
+ * 移除单个输入项（左侧 chip 的 ✕）。
+ *
+ * ⚠️ 必须与 useTaskSelection.removeSelectedTasks 一样同步三处状态：
+ *   1) planStore —— 表格行；2) configStore.inputs —— chip 列表；
+ *   3) 主进程 stagedEntries —— 否则同一文件再次导入会被判重静默丢弃。
+ * 此前这里只改了 configStore，实测表现为：chip 从 2 个变 1 个，
+ * 表格仍是 2 行、顶栏仍显示「开始转码 · 2」，被删掉的文件照样被转码。
+ */
+/**
+ * 失焦时把 CRF 归一化到合法数值。
+ *
+ * ⚠️ v-model.number 对空串不会转成数字：Vue 的 looseToNumber("") 返回字符串 ""，
+ * 于是 tune.quality 变成 ""（表示「跟随预设」）。但滑杆是 range 控件，
+ * 拿到 "" 会被 HTML 的 value sanitization 落回 min/max 中点（25.5 → 显示 26），
+ * 于是**滑杆显示 26、实际却是「跟随预设」**——用户看着 26 点开始转码，
+ * 跑出来的却是预设 CRF。
+ * 归一化为 0（= 不限制，跟随预设）后滑杆与实际值一致。
+ */
+function normalizeQuality() {
+  const q = Number(config.tune.quality)
+  if (!Number.isFinite(q)) {
+    config.tune.quality = 0
+    return
+  }
+  config.tune.quality = Math.max(0, Math.min(51, Math.round(q)))
+}
+
 function removeInput(idx: number) {
-  const item = config.inputs[idx]
+  const target = config.inputs[idx]
+  if (!target) return
+  if (plan.status === "RUNNING" || plan.status === "PLANNING" || plan.status === "STOPPING") {
+    return
+  }
   config.removeInput(idx)
+  // 按路径找到对应任务行并移除（可能有多个任务指向同一路径）
+  const matched = plan.tasks.filter((t) => t.path === target)
+  for (const t of matched) {
+    plan.removeTask(t.id)
+  }
+  if (window.api?.removeStagedInputs) {
+    void window.api.removeStagedInputs([target]).catch((err: unknown) => {
+      logStore.append({
+        level: "WARN",
+        message: `移除暂存输入失败: ${err instanceof Error ? err.message : String(err)}`,
+        timestamp: new Date().toLocaleTimeString(),
+      })
+    })
+  }
   logStore.append({
     level: "INFO",
-    message: `已移除输入项: ${item}`,
+    message: `已移除输入项: ${target}`,
     timestamp: new Date().toLocaleTimeString(),
   })
 }
@@ -429,6 +475,7 @@ const audioSummary = computed(() => {
               placeholder="选择或输入输出目录"
               data-testid="input-output-dir"
               @input="config.setCustomOutputDir(($event.target as HTMLInputElement).value)"
+              @change="config.commitCustomOutputDir(($event.target as HTMLInputElement).value)"
             />
             <button class="btn btn-secondary" data-testid="btn-select-output-dir" @click="pickOutputDir">
               选择目录
@@ -582,6 +629,7 @@ const audioSummary = computed(() => {
               max="51"
               class="input num"
               data-testid="input-quality"
+              @blur="normalizeQuality"
             />
           </div>
         </div>

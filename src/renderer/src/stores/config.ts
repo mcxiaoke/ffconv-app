@@ -43,10 +43,26 @@ export const useConfigStore = defineStore("config", () => {
     }
   }
 
+  /**
+   * 自定义输出目录输入框的逐字符输入。
+   *
+   * ⚠️ 绝不能在这里联动 `outputBesideSource`：调用方用 `v-if="!outputBesideSource"`
+   * 决定是否渲染该输入框，用户退格删到最后一个字符时 dir 变空 →
+   * outputBesideSource 被置回 true → 输入框连同「更改…」按钮当场卸载，
+   * 焦点丢失、光标跳走，且用户看不到自己刚改了什么（框已经消失）。
+   * 另：逐字符写入还会把半截路径存进 savedCustomOutputDir。
+   * 「同级 / 自定义」的选择只应由显式的勾选框或「选择目录」按钮驱动。
+   */
   function setCustomOutputDir(dir: string) {
-    savedCustomOutputDir.value = dir
     outputDir.value = dir
-    outputBesideSource.value = !dir
+  }
+
+  /** 「选择目录」按钮 / 手动敲完整路径后的显式提交（会联动「同级」勾选） */
+  function commitCustomOutputDir(dir: string) {
+    const v = dir.trim()
+    outputDir.value = v
+    savedCustomOutputDir.value = v
+    outputBesideSource.value = !v
   }
 
   const tune = ref<TuneConfig>({
@@ -142,6 +158,7 @@ export const useConfigStore = defineStore("config", () => {
     savedCustomOutputDir,
     setOutputBesideSource,
     setCustomOutputDir,
+    commitCustomOutputDir,
     outputMode,
     prefix,
     suffix,

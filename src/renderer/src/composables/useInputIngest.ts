@@ -4,6 +4,8 @@ import { usePlanStore } from "../stores/plan"
 import { useLogStore } from "../stores/log"
 
 const isIngesting = ref(false)
+/** 并发导入计数：模块级布尔在并发时会被先完成者提前复位 */
+let ingestCount = 0
 
 /**
  * 统一 renderer 输入 ingestion：
@@ -27,6 +29,10 @@ export function useInputIngest() {
       .filter((p): p is string => p.length > 0)
     if (valid.length === 0) return
 
+    // ⚠️ 必须用计数器而非布尔：拖拽 + 菜单点击可并发触发两次导入，
+    // 布尔会在先完成者身上复位，HeaderBar 的 canStart 随之放开，
+    // 用户可能在第二次导入尚未落库时就按下「开始转码」。
+    ingestCount++
     isIngesting.value = true
     // config store 是 UI 输入的事实源：以 addInputs 前后长度差计算本地去重数。
     // 不依赖主进程返回的 skippedDuplicates —— 并发触发时主进程 stagedEntries
@@ -59,7 +65,8 @@ export function useInputIngest() {
         timestamp: new Date().toLocaleTimeString(),
       })
     } finally {
-      isIngesting.value = false
+      ingestCount = Math.max(0, ingestCount - 1)
+      isIngesting.value = ingestCount > 0
     }
   }
 

@@ -58,7 +58,12 @@ const overallStat = computed(() => {
   const executed = planStore.executedTasks.length
   const denom = executed > 0 ? executed : planStore.tasks.length
   if (denom === 0) return "0 / 0"
-  const done = planStore.tasks.filter((t) => t.status === "success").length
+  // ⚠️ 分子口径必须与 overallPercent 一致：进度条把 skipped 计入「已完成」
+  // （FINISHED_STATUSES = success + skipped），此前这里只数 success，
+  // 于是 2 成功 + 1 跳过时进度条显示 100%、状态「已完成」，计数却是「2 / 3」。
+  const done = planStore.tasks.filter(
+    (t) => t.status === "success" || t.status === "skipped",
+  ).length
   return `${done} / ${denom}`
 })
 

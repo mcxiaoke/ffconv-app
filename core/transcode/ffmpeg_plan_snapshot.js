@@ -1,6 +1,21 @@
 import path from "node:path"
 
 /**
+ * 依次取第一个「有限且非负」的数值；都不合格返回 0。
+ * 用于时长/码率等元数据的跨来源回退（各来源字段名与存在性不一致）。
+ *
+ * @param {...unknown} values
+ * @returns {number}
+ */
+function firstFiniteNumber(...values) {
+    for (const v of values) {
+        const n = Number(v)
+        if (Number.isFinite(n) && n > 0) return n
+    }
+    return 0
+}
+
+/**
  * Create the internal execution plan envelope.
  * It may retain preset/runtime objects and is never sent directly to a renderer.
  */
@@ -56,8 +71,21 @@ export function createPublicTaskSnapshot(taskOrEntry = {}, index = 0, defaultSta
     const task = taskOrEntry || {}
     const info = task.mediaInfo || task.info || null
     const size = Number(task.size || 0)
-    const duration = Number(task.duration || 0)
     const dst = task.dstArgs || {}
+    // ⚠️ 时长必须按「任一来源都取得到」的顺序回退，不能只读 task.duration。
+    // 计划阶段产出的 task 里时长落在 `dstArgs.srcDuration`（ffmpeg_plan.js 的
+    // calculateDstArgs 输出），顶层 `duration` 并不总是存在；staging 阶段的
+    // task 又恰好带顶层 duration。此前只读顶层字段，导致计划生成后
+    // 表格「时长」列与详情卡恒为 00:00，而同一屏的日志却写着正确的
+    // 「预估总耗时 9 秒」—— 同一份数据两处矛盾。
+    // 与 ffmpeg_planner.js 的 taskDuration() 保持同一套回退顺序。
+    const duration = firstFiniteNumber(
+        task.duration,
+        dst.srcDuration,
+        info?.duration,
+        task.srcDuration,
+    )
+    const srcDuration = firstFiniteNumber(task.srcDuration, dst.srcDuration, duration)
     const preset = task.preset || {}
     const targetContainer =
         (task.fileDst ? path.extname(task.fileDst).replace(/^\./, "") : preset.format) || undefined
@@ -141,7 +169,7 @@ export function createPublicTaskSnapshot(taskOrEntry = {}, index = 0, defaultSta
             ? task.bitrate
             : info?.bitrate || info?.video?.bitrate,
         srcSize: Number.isFinite(task.srcSize) ? task.srcSize : size,
-        srcDuration: Number.isFinite(task.srcDuration) ? task.srcDuration : duration,
+        srcDuration,
         containerFormat: task.containerFormat || undefined,
         cmdPreview: task.cmdPreview || undefined,
         bitDepth: Number.isFinite(task.bitDepth) ? task.bitDepth : info?.video?.bitDepth,

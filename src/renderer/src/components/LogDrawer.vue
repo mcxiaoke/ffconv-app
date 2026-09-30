@@ -22,15 +22,18 @@ function startResizing(e: MouseEvent) {
     drawerWidth.value = newW
   }
 
-  function onMouseUp() {
+  function stop() {
     isResizing.value = false
     localStorage.setItem("mediac_log_drawer_width", String(drawerWidth.value))
     window.removeEventListener("mousemove", onMouseMove)
-    window.removeEventListener("mouseup", onMouseUp)
+    window.removeEventListener("mouseup", stop)
+    // 指针在窗口外松开时收不到 mouseup，监听与 isResizing 会常驻
+    window.removeEventListener("blur", stop)
   }
 
   window.addEventListener("mousemove", onMouseMove)
-  window.addEventListener("mouseup", onMouseUp)
+  window.addEventListener("mouseup", stop)
+  window.addEventListener("blur", stop)
 }
 
 const isExpanded = ref(false)
@@ -47,13 +50,19 @@ function toggleExpandWidth() {
 
 // 监听递增序号而非 filteredLogs.length：缓冲区满 500 后长度恒定，
 // watch length 会让长任务的自动滚动彻底失效。
+// ⚠️ 只在用户本来就贴着底部时才自动滚动。此前无条件 scrollTop = scrollHeight，
+// 用户向上翻历史时来一条 DEBUG 日志（拖动滑杆也会产生）就把视口拽回底部。
 watch(
   () => `${logStore.seq}|${logStore.filter}|${logStore.focusedTaskId ?? ""}|${logStore.drawerOpen}`,
   async () => {
     if (!logStore.drawerOpen) return
     await nextTick()
-    if (bodyRef.value) {
-      bodyRef.value.scrollTop = bodyRef.value.scrollHeight
+    const el = bodyRef.value
+    if (!el) return
+    // 阈值 48px：视口底部在最后一屏之内即视为「贴底」
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    if (atBottom) {
+      el.scrollTop = el.scrollHeight
     }
   }
 )
@@ -66,14 +75,26 @@ const copied = ref(false)
 
 async function copyAll() {
   const text = logStore.filteredLogs.map((l) => `[${l.ts}] [${l.level}] ${l.text}`).join("\n") || "No logs"
+  // 据实际结果反馈：主进程返回 false 时不再谎报「已复制」
+  let ok = false
   try {
     if (window.api?.copyText) {
-      await window.api.copyText(text)
+      ok = (await window.api.copyText(text)) !== false
     } else if (navigator?.clipboard?.writeText) {
       await navigator.clipboard.writeText(text)
+      ok = true
     }
   } catch (err) {
     console.error("Clipboard copy failed:", err)
+    ok = false
+  }
+  if (!ok) {
+    logStore.append({
+      level: "ERROR",
+      message: "复制日志失败：剪贴板不可用",
+      timestamp: new Date().toLocaleTimeString(),
+    })
+    return
   }
   copied.value = true
   setTimeout(() => {
@@ -142,8 +163,8 @@ async function copyAll() {
 
       <div ref="bodyRef" class="log-body">
         <div
-          v-for="(item, idx) in logStore.filteredLogs"
-          :key="idx"
+          v-for="item in logStore.filteredLogs"
+          :key="item.id"
           class="log-line"
           :class="'l-' + item.level"
         >

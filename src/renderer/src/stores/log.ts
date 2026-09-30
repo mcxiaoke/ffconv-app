@@ -5,6 +5,12 @@ import { ref, computed } from "vue"
 export type LogLevel = "DEBUG" | "INFO" | "CMD" | "WARN" | "ERROR"
 
 export interface LogEntry {
+  /**
+   * 单调递增的唯一 id。
+   * 缓冲区满 500 条后 push+shift 会整体错位，若渲染层用数组下标作 key，
+   * 被淘汰的条目会让后续所有 DOM 节点被错误复用（长任务下渲染成本与显示都受影响）。
+   */
+  id: number
   level: LogLevel
   text: string
   ts: string
@@ -47,6 +53,7 @@ export const useLogStore = defineStore("log", () => {
       lvl = upper
     }
     logs.value.push({
+      id: seq.value,
       level: lvl,
       text: opts.message,
       ts: opts.timestamp || nowTs(),

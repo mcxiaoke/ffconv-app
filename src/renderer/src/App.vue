@@ -33,9 +33,33 @@ const isSidebarCollapsed = ref(false)
 const isResizing = ref(false)
 const showSettings = ref(false)
 const showAbout = ref(false)
+/** 用户手动切换过侧栏后不再自动折叠（尊重显式意图） */
+const sidebarTouchedByUser = ref(false)
 
 function toggleSidebar() {
+  sidebarTouchedByUser.value = true
   isSidebarCollapsed.value = !isSidebarCollapsed.value
+}
+
+/**
+ * 窄窗口自动折叠侧栏。
+ *
+ * 表格用 `table-layout: fixed` + 百分比列（源文件 26% / 目标文件 24%），
+ * 而固定列合计 628px。窗口 960px（应用允许的最小宽度）时主区只剩 561px，
+ * 固定列先把空间吃光，两个百分比列被压到 **0px** —— 实测「源文件」与
+ * 「目标文件」两列宽度为 0，内容完全不可见（不是横向滚动能解决的）。
+ * 折叠侧栏后主区约 900px，各列恢复正常。
+ * 只在跨过阈值时触发一次，且用户手动切换过之后不再干预。
+ */
+const NARROW_AUTO_COLLAPSE_PX = 1080
+function applyNarrowAutoCollapse() {
+  if (sidebarTouchedByUser.value) return
+  const narrow = window.innerWidth < NARROW_AUTO_COLLAPSE_PX
+  if (narrow && !isSidebarCollapsed.value) {
+    isSidebarCollapsed.value = true
+  } else if (!narrow && isSidebarCollapsed.value) {
+    isSidebarCollapsed.value = false
+  }
 }
 
 function startResizing(e: MouseEvent) {
@@ -49,14 +73,80 @@ function startResizing(e: MouseEvent) {
     sidebarWidth.value = newW
   }
 
-  function onMouseUp() {
+  function stop() {
     isResizing.value = false
     window.removeEventListener("mousemove", onMouseMove)
-    window.removeEventListener("mouseup", onMouseUp)
+    window.removeEventListener("mouseup", stop)
+    // ⚠️ 指针在窗口外松开时收不到 window 的 mouseup，监听与 isResizing 会常驻，
+    // 重新移入窗口时侧栏宽度会继续跟着鼠标变。blur 兜底解绑。
+    window.removeEventListener("blur", stop)
   }
 
   window.addEventListener("mousemove", onMouseMove)
-  window.addEventListener("mouseup", onMouseUp)
+  window.addEventListener("mouseup", stop)
+  window.addEventListener("blur", stop)
+}
+
+/**
+ * 引擎事件 -> Pinia store 的唯一映射。
+ * 抽成模块级函数是为了让 onMounted 能在**任何 await 之前**完成订阅
+ * （见 onMounted 内的说明：preload 侧没有事件缓冲/重放）。
+ */
+function handleEngineEvent(event: EngineEvent) {
+  if (event.type === "task.log") {
+    logStore.append({
+      level: event.level || "INFO",
+      message: event.message || "",
+      taskId: event.taskId,
+      timestamp: event.timestamp || new Date().toLocaleTimeString(),
+    })
+  } else if (event.type === "task.started") {
+    planStore.updateTaskStatus(event.taskId, "running")
+  } else if (event.type === "task.progress") {
+    planStore.updateTaskProgress(event.taskId, event.percent || 0, event.speed)
+  } else if (event.type === "task.done") {
+    // 失败任务同样发 task.done（engine 无 task.failed 事件），靠 failed 标记区分
+    if (event.failed === true) {
+      planStore.updateTaskStatus(event.taskId, "failed", event.result?.error || "转码失败")
+    } else {
+      planStore.updateTaskStatus(event.taskId, "success")
+    }
+  } else if (event.type === "task.skipped") {
+    planStore.updateTaskStatus(event.taskId, "skipped", event.reason)
+  } else if (event.type === "task.cancelled") {
+    planStore.updateTaskStatus(event.taskId, "cancelled")
+  } else if (event.type === "session.summary") {
+    const summary = event.summary
+    const failedCount = typeof summary?.failed === "number" ? summary.failed : 0
+    const pendingStaleBefore = planStore.pendingStale
+    planStore.status = summary?.isCancelled
+      ? "STOPPED"
+      : failedCount > 0
+        ? "FAILED"
+        : "COMPLETED"
+    // 运行期间修改过的配置在此刻兑现为 STALE：不能让它随终态一起被吞掉
+    planStore.applyPendingStale()
+    const total = summary?.total || 0
+    const succeeded = typeof summary?.success === "number" ? summary.success : 0
+    logStore.append({
+      level: failedCount > 0 ? "ERROR" : "INFO",
+      message: `转码结束：共 ${total} 个任务，成功 ${succeeded} 个，失败 ${failedCount} 个，跳过 ${summary?.skipped || 0} 个，耗时 ${((summary?.elapsedMs || 0) / 1000).toFixed(1)} 秒`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+    if (pendingStaleBefore) {
+      logStore.append({
+        level: "WARN",
+        message: "运行期间修改过转码配置，当前计划已标记为待更新（下次「开始转码」将自动重新推演）",
+        timestamp: new Date().toLocaleTimeString(),
+      })
+    }
+    if (window.api?.notify) {
+      void window.api.notify(
+        failedCount > 0 ? "转码任务结束（含失败）" : "转码任务完成",
+        `共处理 ${total} 个文件，成功 ${succeeded} 个${failedCount > 0 ? `，失败 ${failedCount} 个` : ""}`
+      ).catch(() => undefined)
+    }
+  }
 }
 
 // Right toolbar stats
@@ -336,7 +426,14 @@ async function pickFilesGlobal() {
       await ingestPaths(res.paths)
     }
   } catch (err) {
+    // 不能只 console.error：主进程对话框调用失败时用户点了「添加文件」界面毫无反应，
+    // 日志抽屉里也查不到任何记录。只记日志等于没有反馈。
     console.error("pickFilesGlobal error:", err)
+    logStore.append({
+      level: "ERROR",
+      message: `选择文件失败: ${err instanceof Error ? err.message : String(err)}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
   }
 }
 
@@ -348,6 +445,11 @@ async function pickDirGlobal() {
     }
   } catch (err) {
     console.error("pickDirGlobal error:", err)
+    logStore.append({
+      level: "ERROR",
+      message: `选择目录失败: ${err instanceof Error ? err.message : String(err)}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
   }
 }
 
@@ -407,6 +509,23 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(async () => {
   window.addEventListener("keydown", handleKeydown)
+  window.addEventListener("resize", applyNarrowAutoCollapse)
+  applyNarrowAutoCollapse()
+
+  // 引擎事件 -> store 的唯一映射（订阅时机见下）
+  function subscribeEngineEvents() {
+    unsubscribeEvents = window.api.onEngineEvent(handleEngineEvent)
+  }
+
+  // ⚠️ 必须**第一个**订阅引擎事件，早于下面任何一个 await。
+  // 此前订阅写在 onMounted 末尾，前面隔着 setCustomToolPaths / fetchEnv（内含
+  // ffmpeg -version 与编码器探测，最慢的一步）/ getExecutionStatus 三个 await。
+  // preload 的 onEngineEvent 只做 ipcRenderer.on，**没有缓冲或重放**，所以这段
+  // 窗口内发出的一切事件（尤其 session.summary）会永久丢失：一旦丢失，
+  // planStore.status 永远停在 RUNNING —— isBusy() 让「生成计划」被静默 return、
+  // 「开始转码」被禁用，用户只能点「终止」，而引擎其实早已结束。
+  // 处理函数只依赖 planStore/logStore（模块级单例）与 window.api，提前订阅安全。
+  subscribeEngineEvents()
 
   // Initialize theme: default to light
   const savedTheme = localStorage.getItem("mediac_theme") || "light"
@@ -507,66 +626,12 @@ onMounted(async () => {
   }
 
   // Subscribe to engine IPC events
-  unsubscribeEvents = window.api.onEngineEvent((event: EngineEvent) => {
-    if (event.type === "task.log") {
-      logStore.append({
-        level: event.level || "INFO",
-        message: event.message || "",
-        taskId: event.taskId,
-        timestamp: event.timestamp || new Date().toLocaleTimeString(),
-      })
-    } else if (event.type === "task.started") {
-      planStore.updateTaskStatus(event.taskId, "running")
-    } else if (event.type === "task.progress") {
-      planStore.updateTaskProgress(event.taskId, event.percent || 0, event.speed)
-    } else if (event.type === "task.done") {
-      // 失败任务同样发 task.done（engine 无 task.failed 事件），靠 failed 标记区分
-      if (event.failed === true) {
-        planStore.updateTaskStatus(event.taskId, "failed", event.result?.error || "转码失败")
-      } else {
-        planStore.updateTaskStatus(event.taskId, "success")
-      }
-    } else if (event.type === "task.skipped") {
-      planStore.updateTaskStatus(event.taskId, "skipped", event.reason)
-    } else if (event.type === "task.cancelled") {
-      planStore.updateTaskStatus(event.taskId, "cancelled")
-    } else if (event.type === "session.summary") {
-      const summary = event.summary
-      const failedCount = typeof summary?.failed === "number" ? summary.failed : 0
-      const pendingStaleBefore = planStore.pendingStale
-      planStore.status = summary?.isCancelled
-        ? "STOPPED"
-        : failedCount > 0
-          ? "FAILED"
-          : "COMPLETED"
-      // 运行期间修改过的配置在此刻兑现为 STALE：不能让它随终态一起被吞掉
-      planStore.applyPendingStale()
-      const total = summary?.total || 0
-      const succeeded = typeof summary?.success === "number" ? summary.success : 0
-      logStore.append({
-        level: failedCount > 0 ? "ERROR" : "INFO",
-        message: `转码结束：共 ${total} 个任务，成功 ${succeeded} 个，失败 ${failedCount} 个，跳过 ${summary?.skipped || 0} 个，耗时 ${((summary?.elapsedMs || 0) / 1000).toFixed(1)} 秒`,
-        timestamp: new Date().toLocaleTimeString(),
-      })
-      if (pendingStaleBefore) {
-        logStore.append({
-          level: "WARN",
-          message: "运行期间修改过转码配置，当前计划已标记为待更新（下次「开始转码」将自动重新推演）",
-          timestamp: new Date().toLocaleTimeString(),
-        })
-      }
-      if (window.api?.notify) {
-        void window.api.notify(
-          failedCount > 0 ? "转码任务结束（含失败）" : "转码任务完成",
-          `共处理 ${total} 个文件，成功 ${succeeded} 个${failedCount > 0 ? `，失败 ${failedCount} 个` : ""}`
-        )
-      }
-    }
-  })
+  unsubscribeEvents = window.api.onEngineEvent(handleEngineEvent)
 })
 
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown)
+  window.removeEventListener("resize", applyNarrowAutoCollapse)
   unsubscribeEvents?.()
   unsubscribeMenu?.()
 })
