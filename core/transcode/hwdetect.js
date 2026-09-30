@@ -191,7 +191,7 @@ export async function detectHardwareCapabilities({
         error.name = "AbortError"
         throw error
     }
-    capabilitiesPromise = doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal })
+    capabilitiesPromise = doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, force })
     try {
         return await capabilitiesPromise
     } finally {
@@ -200,8 +200,11 @@ export async function detectHardwareCapabilities({
 }
 
 /** 实际探测逻辑（detectHardwareCapabilities 的 in-flight 去重载体） */
-async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal }) {
-    if (cachedCapabilities) {
+async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, force = false }) {
+    // ⚠️ 必须把 force 透传进来。此前内层无条件 `if (cachedCapabilities) return`，
+    // 使外层的 force 形同虚设：任何调用方（含 index.js 导出的公开 API）请求
+    // 强制重探（换 ffmpeg 二进制、插拔 GPU）都会静默拿到旧结论。
+    if (cachedCapabilities && !force) {
         return cachedCapabilities
     }
 

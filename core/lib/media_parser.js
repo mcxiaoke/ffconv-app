@@ -143,6 +143,127 @@ export function depthClassOf(pixFmt, explicitBitDepth) {
     return depth >= 10 ? "hi" : "8"
 }
 
+/**
+ * 解析容器内的**绝对**流序号（0 基）。
+ *
+ * 为什么必须要它：`-map 0:v:0` 里的 `v:0` 是「第 0 个 video 类型流」，
+ * 而 ffprobe/mediainfo 会把内嵌封面（attached_pic）也报成 codec_type=video。
+ * 带封面的 MKV 实测：封面 = stream0、真实视频 = stream1，
+ * `-map 0:v:0` 因此选中封面，产物是 1 帧静态图而 ffmpeg 退出码为 0。
+ * 改用绝对序号 `-map 0:<streamIndex>` 才是正确的（见 ffmpeg_tags.js）。
+ *
+ * @param {string|number} v ffprobe 的 `index`，或 mediainfo 的 `StreamOrder`
+ * @returns {number|undefined} 合法绝对序号，否则 undefined（调用方须走无 -map 兜底）
+ */
+export function resolveStreamIndex(v) {
+    if (v === undefined || v === null || v === "") return undefined
+    // mediainfo 的 StreamOrder 形如 "1" 或 "0-1"（覆盖多流时取首个）
+    const s = String(v).trim()
+    const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(s)
+    if (!m) return undefined
+    const n = Number(m[1])
+    return Number.isInteger(n) && n >= 0 ? n : undefined
+}
+
+/**
+ * 静帧图像编码器：内嵌封面的常见形态。
+ * 需同时吃两种命名：
+ *  - ffprobe `codec_name`：`mjpeg` / `png` / `bmp` / `webp` / `tiff` / `gif`
+ *  - mediainfo `CodecID`：`V_MJPEG` / `V_PNG` / `V_MPEG4/ISO/SP`（带 `V_` 前缀与 `Format_` 家族名）
+ * 故先剥 `v_` 前缀，再匹配基础名。
+ */
+const STILL_IMAGE_CODEC = /^(mjpeg|mpeg4(\/iso\/sp)?|webp|png|bmp|tiff|av1_image|ape|gif|jpeg)$/
+
+/** 统一两种探测器的编码器命名，便于共用同一张静帧编码器表 */
+function normalizeCodecName(codec) {
+    let c = String(codec || "").toLowerCase().trim()
+    if (c.startsWith("v_")) c = c.slice(2)
+    return c
+}
+
+/**
+ * 「这条视频流像内嵌封面」的启发式判定。
+ *
+ * ⚠️ 两种探测器的封面表现完全不同，必须都防：
+ *  - **MP4**：ffprobe 给出 `disposition.attached_pic=1`（可靠信号），且封面排在
+ *    真实视频**之后**（实测 index=2），所以 `-map 0:v:0` 恰好选对 —— 这是当前
+ *    唯一安全的容器。
+ *  - **MKV/Matroska**：ffprobe **不给** attached_pic（实测 attached_pic=0），
+ *    封面就是 stream0、真实视频是 stream1。此时 `-map 0:v:0` 会选中封面，
+ *    产物是 1 帧静态图而 ffmpeg 退出码为 0（真机复现）。
+ *  - mediainfo 侧：MKV 封面同样报 `@type=Video`（`V_MJPEG`）而非 `@type=Image`，
+ *    既有注释「mediainfo 侧封面是 @type=Image，天然不会踩」是错的。
+ *
+ * 仅用于**排序**（pickVideoStream）：优先取不像封面的流；全都像封面时仍退回
+ * 第一条，保证「单个 mjpeg 视频」这类正常文件不会被判成无视频。
+ *
+ * @param {{codec?:string, frames?:number|string, width?:number|string, isImage?:boolean}} s
+ * @returns {boolean}
+ */
+function looksLikeCoverArt({ codec, frames, width, isImage }) {
+    if (isImage === true) return true
+    const c = normalizeCodecName(codec)
+    if (!STILL_IMAGE_CODEC.test(c)) return false
+    // 静帧编码器：若帧数明确 >1（真实 mjpeg 视频）或尺寸明显大于封面，才放行
+    const n = Number(frames)
+    const w = Number(width)
+    if (Number.isFinite(n) && n > 1) return false
+    if (Number.isFinite(w) && w > 1024) return false
+    return true
+}
+
+/**
+ * 从若干候选视频流里挑「主视频流」。
+ *
+ * 分三档（`_coverRank`），刻意区分「确证封面」与「疑似封面」：
+ *  - 0 = 正常视频流，优先取；
+ *  - 1 = 疑似封面（静帧编码器等启发式）—— 若没有 0 档则取它，保证单个 mjpeg
+ *    视频这类正常文件不会被判成「无视频」；
+ *  - 2 = 确证封面（ffprobe attached_pic=1 / mediainfo @type=Image）—— 全是 2 档时
+ *    返回 undefined，即「本文件无视频流」（带封面的 mp3 走音频流程），
+ *    这与既有 fromFFprobeJson 行为一致，不可回退。
+ *
+ * @param {Array<object>} candidates 每项带 `_coverRank`
+ * @returns {object|undefined}
+ */
+function pickVideoStream(candidates) {
+    const list = (Array.isArray(candidates) ? candidates : []).filter(Boolean)
+    if (list.length === 0) return undefined
+    for (const rank of [0, 1]) {
+        const hit = list.find((s) => (s._coverRank ?? 0) === rank)
+        if (hit) return hit
+    }
+    return undefined
+}
+
+/** ffprobe 流 → pickVideoStream 的候选（覆盖 attached_pic 与无 disposition 的 MKV 封面） */
+function pickFFprobeVideoStream(streams) {
+    const videos = (Array.isArray(streams) ? streams : []).filter(
+        (s) => s && s.codec_type === "video",
+    )
+    const candidates = videos.map((s) => {
+        const isAttachedPic = s.disposition?.attached_pic === 1
+        const heuristic = looksLikeCoverArt({ codec: s.codec_name, frames: s.nb_frames, width: s.width })
+        return { ...s, _coverRank: isAttachedPic ? 2 : heuristic ? 1 : 0 }
+    })
+    return pickVideoStream(candidates)
+}
+
+/** mediainfo track → pickVideoStream 的候选 */
+function pickMediaInfoVideoTrack(tracks) {
+    const videos = (Array.isArray(tracks) ? tracks : []).filter((t) => t && t["@type"] === "Video")
+    const candidates = videos.map((t) => {
+        const isImage = t["@type"] === "Image"
+        const heuristic = looksLikeCoverArt({ codec: t.CodecID || t.Format, frames: t.FrameCount, width: t.Width })
+        return { track: t, _coverRank: isImage ? 2 : heuristic ? 1 : 0 }
+    })
+    const picked = pickVideoStream(candidates)
+    if (!picked) return undefined
+    const t = picked.track
+    t._streamIndex = resolveStreamIndex(t.StreamOrder)
+    return t
+}
+
 /** "a:b" 或十进制（mediainfo 的 PixelAspectRatio="1.227"）→ 数值；无效返回 null */
 function toRatio(v) {
     if (v === undefined || v === null || v === "") return null
@@ -225,6 +346,7 @@ class Video extends MediaStreamBase {
         pixelFormat, // 像素格式
         codedWidth, // 编码宽度（SAR≠1 时与 width 不同，仅用于排查）
         codedHeight, // 编码高度（同上）
+        streamIndex, // 容器内的**绝对**流序号（ffprobe index / mediainfo StreamOrder）
     }) {
         super({ type, format, codec, profile, level, size, duration, bitrate, language })
         this.framerate = framerate // 帧率
@@ -235,6 +357,7 @@ class Video extends MediaStreamBase {
         this.codedHeight = codedHeight // 编码高度
         this.aspectRatio = aspectRatio
         this.pixelFormat = pixelFormat
+        this.streamIndex = streamIndex // 见 resolveStreamIndex：-map 必须用它而非 0:v:0
     }
 }
 
@@ -313,6 +436,8 @@ function fromFFprobe(data) {
         aspectRatio: data["display_aspect_ratio"],
         sampleRate: data["sample_rate"],
         language: data["tags"]?.["language"], // 语言
+        // 绝对流序号：-map 必须用它，0:v:0 会选中封面（见 resolveStreamIndex）
+        streamIndex: data._streamIndex ?? resolveStreamIndex(data["index"]),
     }
     return createStreamData(obj)
 }
@@ -357,6 +482,8 @@ function fromMediaInfo(data) {
         aspectRatio: data["DisplayAspectRatio"],
         sampleRate: data["SamplingRate"],
         language: data["Language"], // 语言
+        // 绝对流序号：mediainfo 用 StreamOrder（pickMediaInfoVideoTrack 已解析）
+        streamIndex: data._streamIndex ?? resolveStreamIndex(data["StreamOrder"]),
     }
     return createStreamData(obj)
 }
@@ -395,13 +522,12 @@ export function fromFFprobeJson(data) {
 
     // 从streams数组中提取不同类型的流信息
     const ad = data.streams?.find((obj) => obj.codec_type === "audio") // 音频流
-    // ⚠️ 视频流必须排除 attached_pic（内嵌封面图）：ffprobe 把封面也报成
-    //    codec_type=video。真实片库实测 11.4%（279/2444，动画 mp4 带 mjpeg 封面）
-    //    会命中；不排除就会把 320x240 封面当主视频去转码。
-    //    （mediainfo 侧封面是 @type=Image，天然不会踩；见 docs/ffmpeg/ffmpeg-metadata-fields-20260922.md §7.3）
-    //    若所有视频流都是封面（如带封面的 mp3）→ 视为"无视频流"，交给音频流程处理。
-    const videoStreams = (data.streams || []).filter((obj) => obj.codec_type === "video")
-    const vd = videoStreams.find((obj) => obj.disposition?.attached_pic !== 1)
+    // ⚠️ 视频流必须排除内嵌封面：ffprobe 把封面也报成 codec_type=video。
+    //    两种形态都要防（详见 looksLikeCoverArt 注释）：
+    //      MP4  → disposition.attached_pic=1，且封面排在真实视频之后；
+    //      MKV  → 无 attached_pic，封面就是 stream0（此时 -map 0:v:0 会选中封面）。
+    //    若所有视频流都是确证封面（如带封面的 mp3）→ 视为"无视频流"，交给音频流程。
+    const vd = pickFFprobeVideoStream(data.streams)
     const sd = data.streams?.filter((obj) => obj.codec_type === "subtitle") // 字幕流数组
 
     // ⚠️ DRM/加密流的 codec_name 为 undefined（实测 drm.m4v），ffprobe 认不出编码器。
@@ -452,7 +578,8 @@ export function fromMediaInfoJson(data) {
         throw new Error("mediainfo: no General track (unparseable file)")
     }
     const ad = data.media?.track?.find((o) => o["@type"] === "Audio")
-    const vd = data.media?.track?.find((o) => o["@type"] === "Video")
+    // ⚠️ 不能用 find(@type==="Video")：MKV 封面在 mediainfo 里也是 Video（见 looksLikeCoverArt）
+    const vd = pickMediaInfoVideoTrack(data.media?.track)
     const sd = data.media?.track?.filter((o) => o["@type"] === "Text")
     const obj = {
         provider: "mediainfo",

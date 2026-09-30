@@ -46,8 +46,11 @@ function fixEncoding(str = "") {
 async function ffprobeCall(filePath, { probePath = ffprobeBin, signal = null } = {}) {
     // 只选择需要的字段，避免乱码和非法JSON
     // 有的文件视频和音频duration和bit_rate放在stream_tags里
+    // ⚠️ index 与 nb_frames 不可省：index 是 -map 用的**绝对**流序号，
+    //    缺了它就无法避开内嵌封面（MKV 封面即 stream0，-map 0:v:0 会选中封面，
+    //    产物变成 1 帧静态图而退出码为 0）。nb_frames 用于封面启发式判定。
     const propsSelected =
-        "stream=codec_name,codec_long_name,profile,level,codec_type,codec_tag_string,width,height,display_aspect_ratio,sample_aspect_ratio,pix_fmt,duration,bit_rate,sample_rate,sample_fmt,time_base,r_frame_rate,avg_frame_rate,channels,bits_per_sample,bits_per_raw_sample:stream_disposition=attached_pic:format=format_name,format_long_name,duration,size,bit_rate:stream_tags:format_tags=creation_time"
+        "stream=index,codec_name,codec_long_name,profile,level,codec_type,codec_tag_string,width,height,display_aspect_ratio,sample_aspect_ratio,pix_fmt,duration,bit_rate,nb_frames,sample_rate,sample_fmt,time_base,r_frame_rate,avg_frame_rate,channels,bits_per_sample,bits_per_raw_sample:stream_disposition=attached_pic:format=format_name,format_long_name,duration,size,bit_rate:stream_tags:format_tags=creation_time"
     const cmdArgs = ["-v", "error"]
     cmdArgs.push("-show_entries", propsSelected)
     cmdArgs.push("-of", "json", filePath)

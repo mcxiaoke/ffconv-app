@@ -28,24 +28,89 @@ export function isBitmapSubtitle(sub) {
     return BITMAP_SUBTITLE_FORMATS.has(fmt) || BITMAP_SUBTITLE_FORMATS.has(codec)
 }
 
+/**
+ * 视频流选择参数。
+ *
+ * ⚠️ 必须用**绝对流序号**（`0:<idx>`）而不是 `0:v:0`。
+ * `v:0` 指「第 0 个 video 类型流」，而 ffprobe/mediainfo 把内嵌封面也报成 video：
+ * 带封面的 MKV 实测封面 = stream0、真实视频 = stream1，于是 `-map 0:v:0`
+ * 选中封面，产物是 1 帧静态图、ffmpeg 退出码却是 0（真机复现）。
+ * 绝对序号来自 media_parser 的 resolveStreamIndex（见 looksLikeCoverArt 注释）。
+ *
+ * 取不到序号时返回 null：此时**一条 -map 都不能给**。ffmpeg 只要出现任意 -map 就会
+ * 切到「手动流选择」，若只给 `-map 0:a?` 而不给视频，实测 ffmpeg 会自动补上
+ * stream0（= 封面）作为视频流，封面又回来了。完全不给 -map 时 ffmpeg 走默认选择，
+ * 实测默认选择本身就跳过 attached_pic。
+ *
+ * @param {object} entry
+ * @returns {string[]|null}
+ */
+function videoStreamMapArgs(entry) {
+    const idx = entry?.info?.video?.streamIndex
+    return Number.isInteger(idx) && idx >= 0 ? ["-map", `0:${idx}`] : null
+}
+
+/** 封面/序号缺失时的一次性告警（同一文件只提示一次，避免刷屏） */
+const warnedStreamIndex = new WeakSet()
+
+function warnNoStreamIndex(entry) {
+    if (!entry || typeof entry !== "object") return
+    if (warnedStreamIndex.has(entry)) return
+    warnedStreamIndex.add(entry)
+    log.logWarn(
+        "FFConv",
+        `Cannot resolve the absolute video stream index of ${entry.name || entry.path || "?"}; ` +
+            "falling back to ffmpeg default stream selection (may drop extra audio/subtitle tracks)",
+    )
+}
+
 // 针对 MKV、MP4 及图形字幕降级的预定义字幕与流映射模板
-export const SUB_ARGS_MKV = ["-c:s", "copy", "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?"]
-export const SUB_ARGS_MP4 = ["-c:s", "mov_text", "-map", "0:v:0", "-map", "0:a?", "-map", "0:s?"]
-export const SUB_ARGS_MP4_DROP = ["-sn", "-map", "0:v:0", "-map", "0:a?"]
+// 注意：视频流映射由 videoStreamMapArgs 动态给出（见其注释），此处只放其余部分。
+export const SUB_ARGS_MKV = ["-c:s", "copy", "-map", "0:a?", "-map", "0:s?"]
+export const SUB_ARGS_MP4 = ["-c:s", "mov_text", "-map", "0:a?", "-map", "0:s?"]
+export const SUB_ARGS_MP4_DROP = ["-sn", "-map", "0:a?"]
+
+/**
+ * 把「视频流绝对序号 + 音频/字幕流映射」整体压入参数数组。
+ *
+ * 视频流的绝对序号取不到时，**整组 -map 都不输出**（ffmpeg 走默认流选择，
+ * 实测默认选择会正确跳过 attached_pic），而不是只输出音频/字幕的 -map ——
+ * 后者会让 ffmpeg 手动选择并自动补回 stream0（封面）。详见 videoStreamMapArgs。
+ *
+ * @param {object} entry
+ * @param {string[]} inputArgs 原地追加
+ * @param {string[]} tail 视频流之后要跟的参数（`-map 0:a?` 等）
+ */
+function pushStreamMaps(entry, inputArgs, tail) {
+    const videoMap = videoStreamMapArgs(entry)
+    if (!videoMap) {
+        warnNoStreamIndex(entry)
+        return
+    }
+    inputArgs.push(...videoMap, ...tail)
+}
 
 /**
  * 附加字幕与流映射参数（预定义模板驱动）：
  * - 优先使用外部选中的字幕；
  * - MKV 容器使用 -c:s copy 完整保留所有字幕（文本/图形）；
  * - MP4 容器文本字幕转 -c:s mov_text，检测到图形字幕（PGS/VobSub）时容错使用 -sn；
- * - 默认使用 -map 0:v:0 -map 0:a? -map 0:s? 保留全部音频和字幕轨道（外挂字幕映射 1:0?）。
+ * - 视频流用**绝对序号**映射（见 videoStreamMapArgs），音频/字幕保留全部轨道。
+ *
+ * ⚠️ 只对**视频预设**生效。音频类预设（含从视频提取音频的 `audio_extract`）
+ * 不能参与：它的 streamArgs 自带 `-vn -map 0:a:0`，若这里再插一组
+ * `-map 0:a?` 就会映射两次，实测产物出现两条一模一样的重复音轨。
  * @param {Object} entry - 文件对象
  * @param {string[]} inputArgs - 正在构建的输入参数数组（原地追加）
  * @param {Object} tempPreset - 预设副本
  */
 export function appendSubtitleArgs(entry, inputArgs, tempPreset) {
-    // 仅视频预设或视频文件处理字幕和视频流映射
-    if (tempPreset.type !== "video" && !helper.isVideoFile(entry.path)) {
+    // 仅视频预设处理字幕与视频流映射。
+    // 旧条件是 `type !== "video" && !isVideoFile(path)`：audio_extract（type=audio）
+    // 作用于 .mp4 时 isVideoFile 为真 → 条件为 false → 不早退，继续插入 -map 0:a?，
+    // 与预设自带的 `-map 0:a:0` 叠加成重复音轨（真机复现）。
+    // 正确判据只有预设类型：非视频预设一律不碰流映射。
+    if (tempPreset.type !== "video") {
         return
     }
 
@@ -68,7 +133,7 @@ export function appendSubtitleArgs(entry, inputArgs, tempPreset) {
                 "WebM container supports WebVTT subtitles only; dropping subtitles with -sn",
             )
         }
-        inputArgs.push(...SUB_ARGS_MP4_DROP)
+        pushStreamMaps(entry, inputArgs, SUB_ARGS_MP4_DROP)
         return
     }
 
@@ -84,19 +149,14 @@ export function appendSubtitleArgs(entry, inputArgs, tempPreset) {
             "language=chi",
             "-disposition:s:0",
             "default",
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a?",
-            "-map",
-            "1:0?",
         )
+        pushStreamMaps(entry, inputArgs, ["-map", "1:0?"])
         return
     }
 
     // 2. 内嵌字幕：MKV 容器无损直通复制
     if (isMkv) {
-        inputArgs.push(...SUB_ARGS_MKV)
+        pushStreamMaps(entry, inputArgs, SUB_ARGS_MKV)
         return
     }
 
@@ -108,9 +168,9 @@ export function appendSubtitleArgs(entry, inputArgs, tempPreset) {
             "FFConv",
             "Bitmap subtitle (PGS/VobSub) is not supported in MP4 container; dropping subtitles with -sn",
         )
-        inputArgs.push(...SUB_ARGS_MP4_DROP)
+        pushStreamMaps(entry, inputArgs, SUB_ARGS_MP4_DROP)
     } else {
-        inputArgs.push(...SUB_ARGS_MP4)
+        pushStreamMaps(entry, inputArgs, SUB_ARGS_MP4)
     }
 }
 

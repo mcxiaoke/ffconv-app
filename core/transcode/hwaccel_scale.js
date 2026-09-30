@@ -52,12 +52,19 @@ export function calcLongEdge(srcW, srcH, dimension) {
     }
     // 禁止放大：目标长边不超过源长边
     const target = Math.min(dimension, Math.max(srcW, srcH))
-    if (srcW >= srcH) {
-        // 横屏 / 正方形：宽是长边
-        return { w: toEven(target), h: toEven((srcH * target) / srcW) }
-    }
-    // 竖屏：高是长边
-    return { w: toEven((srcW * target) / srcH), h: toEven(target) }
+    const size =
+        srcW >= srcH
+            ? // 横屏 / 正方形：宽是长边
+              { w: toEven(target), h: toEven((srcH * target) / srcW) }
+            : // 竖屏：高是长边
+              { w: toEven((srcW * target) / srcH), h: toEven(target) }
+    // ⚠️ toEven(1) === 0：极小 dimension（--dimension 1）或极端长宽比
+    // （10000x8 缩到 1080 → h=0）会算出 {0,0} 或某边为 0。
+    // 下游用 `if (size?.w && size?.h)` 判真，0 是 falsy → 回落重算 → 仍为 0 →
+    // 最终**静默不缩放**，用户请求的分辨率被无声忽略（仅一条 warn）。
+    // 这里夹到最小 2（yuv420p 等子采样格式的硬性下限）而不是抛错：
+    // 抛错会把整个任务判为 skipped，而用户只是给了个很小的值。
+    return { w: Math.max(2, size.w), h: Math.max(2, size.h) }
 }
 
 // ---------------------------------------------------------------------------

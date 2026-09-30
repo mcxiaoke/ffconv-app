@@ -353,7 +353,11 @@ function calculateDstArgs(entry) {
         srcAudioBitrate = iaudio?.bitrate || 0
         // 计算出的视频码率不高于源文件的视频码率
         // 减去音频的码率，估算为48k
-        srcVideoBitrate = ivideo?.bitrate || fileBitrate - 48 * 1000 || 0
+        // ⚠️ 旧写法 `ivideo?.bitrate || fileBitrate - 48 * 1000 || 0`：
+        // fileBitrate 为 0 时 `0 - 48000 = -48000` 是**真值**，|| 0 兜不住，
+        // srcVideoBitrate 会变成 -48000 并流进任务对象/日志（显示为 "-48K"）。
+        // 这里显式夹到 >= 0，并要求估算基数确实大于音频预留量。
+        srcVideoBitrate = ivideo?.bitrate || (fileBitrate > 48 * 1000 ? fileBitrate - 48 * 1000 : 0) || 0
 
         // 音频和视频码率 用户指定>预设
         // 音频和视频码率都不能高于原码率

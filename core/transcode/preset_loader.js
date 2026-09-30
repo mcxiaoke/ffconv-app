@@ -137,15 +137,29 @@ function validatePresetFields(name, preset) {
     if (unknown.length > 0) {
         log.logWarn(
             LOG_TAG,
-            `Preset '${name}' has unknown field(s): ${unknown.join(", ")} (ignored)`,
+            `Preset '${name}' has unknown field(s): ${unknown.join(", ")} (dropped)`,
         )
+        // 必须真的删掉：拼错的字段若原样进入 FFmpegPreset，会与"被忽略"的
+        // 提示自相矛盾——用户以为改了参数，实际该键仍可能影响构造。
+        for (const k of unknown) {
+            delete preset[k]
+        }
     }
     const typeMismatch = Object.keys(preset).filter((k) => hasPresetTypeMismatch(k, preset[k]))
     if (typeMismatch.length > 0) {
         log.logWarn(
             LOG_TAG,
-            `Preset '${name}' has field(s) with wrong type: ${typeMismatch.join(", ")} (ignored)`,
+            `Preset '${name}' has field(s) with wrong type: ${typeMismatch.join(", ")} (dropped, ` +
+                "falling back to the inherited/default value)",
         )
+        // ⚠️ 必须真的删掉，否则告警在撒谎。实测 `dimension: "1080"`（YAML 里
+        // 手滑加了引号）会原样进入 FFmpegPreset，随后 calcLongEdge 用**严格**
+        // 的 Number.isFinite 判定并 throw；该异常被 buildCliTask 吞成
+        // skipped(PREPARE_ERROR)，于是「已被告知忽略」的预设下**每个文件都被跳过**，
+        // 且错误信息完全指错方向。删掉后回落到继承/默认值，行为可预期。
+        for (const k of typeMismatch) {
+            delete preset[k]
+        }
     }
     return true
 }

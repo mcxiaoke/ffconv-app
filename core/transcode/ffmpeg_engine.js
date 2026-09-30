@@ -279,7 +279,15 @@ export function createFFmpegEngine({ runTask, onEvent } = {}) {
                     if (!result) {
                         result = toRunResult(currentTask)
                     }
-                    if (signal?.aborted || result.status === RUN_STATUS.CANCELLED) {
+                    // ⚠️ 判据只能是 result.status，不能并上 signal?.aborted。
+                    // 「开始前/重试前被取消」这两个时机已在上方显式构造
+                    // result.status = CANCELLED；而 runTask 正常返回 success 之后
+                    // 用户才点「终止」时，signal 会被 abort，但文件**已经写完**。
+                    // 此前 `signal?.aborted ||` 排在 SUCCESS 分支之前，会把这种
+                    // 「已成功产出」的任务改判为 cancelled：summary.success 少计、
+                    // UI 上已产出的文件显示"已取消"、deleteCompletedSources 也不认它。
+                    // 会话级取消语义由下方 summary.isCancelled 单独承担，不在此处判断。
+                    if (result.status === RUN_STATUS.CANCELLED) {
                         currentTask.status = "cancelled"
                         currentTask.cancelReason = result.reason || "cancelled"
                         summary.cancelled++

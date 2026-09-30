@@ -413,6 +413,20 @@ function createFromArgv(argv) {
 
     // 参数中指定的preset
     let preset = getPreset(presetName)
+    // ⚠️ getPreset 对不存在的名字返回 undefined，而 structuredClone(undefined)
+    // 仍是 undefined —— 错误会推迟到后面第一次 `preset.xxx = ...` 才以原生
+    // "TypeError: Cannot set properties of undefined" 抛出，用户既不知道是预设名
+    // 写错，也拿不到可用预设列表。这里提前给出可操作的错误。
+    if (!preset) {
+        const names = getAllNames()
+        const hint = names.length
+            ? `Available presets: ${names.slice(0, 20).join(", ")}` +
+              (names.length > 20 ? ` ... (+${names.length - 20} more)` : "")
+            : "Preset list is not loaded yet"
+        const err = new Error(`Unknown preset "${presetName}". ${hint}`)
+        err.code = "PRESET_NOT_FOUND"
+        throw err
+    }
     // 克隆对象，不修改Map中的内容
     preset = structuredClone(preset)
     if (isAnime) {
