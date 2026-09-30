@@ -676,7 +676,7 @@ onUnmounted(() => {
       ></div>
 
       <!-- 右侧主任务区 -->
-      <main class="main" data-testid="main-panel">
+      <main class="main" :class="{ 'with-edge-expand': isSidebarCollapsed }" data-testid="main-panel">
         <!-- 侧栏收起时的左边缘浮动展开按钮 -->
         <button
           v-if="isSidebarCollapsed"
@@ -804,10 +804,10 @@ onUnmounted(() => {
   border: 1px solid var(--border);
   border-left: none;
   border-radius: 0 4px 4px 0;
-  padding: 6px 8px;
+  padding: 6px 6px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-2);
@@ -825,6 +825,35 @@ onUnmounted(() => {
 .btn-edge-expand svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * 侧栏收起时，「展开配置」按钮是绝对定位在主区左上角的。
+ * 它此前直接压在任务表的表头（复选框 / 源文件 列）上，把表头文字和列分隔线挡住；
+ * 窄窗口自动折叠把这个现象变得很常见。
+ * 现在为它预留出左侧内边距，让按钮落在**空白**里而不是盖住表头。
+ */
+.main.with-edge-expand {
+  padding-left: 30px;
+}
+
+/*
+ * 窄窗口下侧栏会自动收起，此时「配置」按钮常驻在主区左上角。
+ * 带文字的按钮约 50px 宽，会盖住任务表最左侧的表头，因此窄屏只保留图标
+ * （title 仍说明作用），把占位压到 30px 以内。
+ */
+@media (max-width: 1200px) {
+  .btn-edge-expand span {
+    display: none;
+  }
+
+  .btn-edge-expand {
+    padding: 6px 4px;
+  }
+
+  .main.with-edge-expand {
+    padding-left: 24px;
+  }
 }
 
 .toolbar {
