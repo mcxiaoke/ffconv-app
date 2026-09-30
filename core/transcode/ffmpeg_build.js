@@ -187,7 +187,21 @@ function buildScaleFiltersFromPlan(entry, hwPlan, tempPreset) {
         return chain.join(",")
     }
 
-    const needScale = scaleRequested || entry.dstArgs.scaled || framerate > 0
+    // ⚠️ 是否生成 scale 段只看「尺寸是否真的变了」，不能把 {scaleFilter} 占位符
+    // 或「要改帧率」当作缩放理由。内置 4 个视频基类的 filters 都是 "{scaleFilter}"，
+    // 于是 scaleRequested 恒为 true；而 1080p 源跑 dimension=1920 的预设时
+    // dstArgs.scaled=false，framerate>0 也会被算进来 —— 结果对**每一个**文件都多出
+    // 一次与原分辨率相同的 1:1 重采样（实测生成 scale=w=1920:h=1080）。
+    // 占位符的语义是「缩放段的位置标记」，实际尺寸由 effectiveSize 决定；
+    // 位深对齐需要的格式转换由 buildVideoFilters 的 swFormat 分支承担
+    // （hasScale 为 false 时它仍会输出「只换格式、不改尺寸」的 scale）。
+    const srcW = entry.info?.video?.width || 0
+    const srcH = entry.info?.video?.height || 0
+    const sizeChanged =
+        !!effectiveSize &&
+        ((srcW > 0 && effectiveSize.w !== toEven(srcW)) ||
+            (srcH > 0 && effectiveSize.h !== toEven(srcH)))
+    const needScale = sizeChanged || entry.dstArgs.scaled === true
     return buildVideoFilters({
         tier,
         size: effectiveSize,

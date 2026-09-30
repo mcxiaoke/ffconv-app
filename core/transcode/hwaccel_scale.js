@@ -217,7 +217,15 @@ export function buildVideoFilters({
     const vramFrames = tier.hwFormat === "cuda" || tier.hwFormat === "qsv"
     const swDomain = vramFrames && !!(preFilters || postFilters)
     if (swDomain) {
-        chain.push("hwdownload", "format=nv12")
+        // ⚠️ 这里过去无条件写死 format=nv12，把 10bit / 高位深源一律降为 8bit 4:2:0，
+        // 即使目标编码器（hevc/av1 族）本来可以直接吃 p010 —— 属于静默的画质/色度降级。
+        // 正确判据：只有「目标必须 8bit」时才用 nv12；否则按源位深选 p010le。
+        // 8bit 源的输出与旧实现逐字节一致（仍是 nv12），不改变既有行为。
+        // 注：4:4:4 色度保持不在此处理（hwdownload 后的软件域链路本就按 4:2:0 走）。
+        const mustBe8bit = !!scaleFormatOverride(tier, { codecFamily, pixFmt, bitDepth })
+        const hiBit = needsDepthAlign(pixFmt, bitDepth)
+        const swFormat = mustBe8bit ? "nv12" : hiBit ? "p010le" : "nv12"
+        chain.push("hwdownload", `format=${swFormat}`)
     }
     if (preFilters) {
         chain.push(preFilters)
