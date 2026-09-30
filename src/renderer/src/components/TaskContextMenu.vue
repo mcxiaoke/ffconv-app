@@ -105,7 +105,7 @@ async function onCopyCmd() {
     const ok = await copyToClipboard(cmd)
     logStore.append({
       level: ok ? "INFO" : "ERROR",
-      message: ok ? `已复制推演 FFmpeg 命令` : "复制推演 FFmpeg 命令失败：剪贴板不可用",
+      message: ok ? "已复制 FFmpeg 命令" : "复制 FFmpeg 命令失败：剪贴板不可用",
       timestamp: new Date().toLocaleTimeString(),
     })
   }
@@ -184,7 +184,7 @@ function onClearAll() {
         <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" />
         <polygon points="10 8 16 12 10 16 10 8" />
       </svg>
-      <span>播放转码产物</span>
+      <span>播放输出文件</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-inspect" @click="onInspect">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -192,28 +192,28 @@ function onClearAll() {
         <line x1="12" y1="16" x2="12" y2="12" />
         <line x1="12" y1="8" x2="12.01" y2="8" />
       </svg>
-      <span>查看媒体信息 (ffprobe)</span>
+      <span>媒体信息</span>
       <span class="ctx-hint">双击</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-show-folder" @click="onOpenInFolder">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
-      <span>在文件管理器中定位</span>
+      <span>在文件夹中显示</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-copy-path" @click="onCopyPath">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
         <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
       </svg>
-      <span>复制文件全路径</span>
+      <span>复制路径</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-copy-cmd" @click="onCopyCmd">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="4 17 10 11 4 5" />
         <line x1="12" y1="19" x2="20" y2="19" />
       </svg>
-      <span>复制推演 FFmpeg 命令</span>
+      <span>复制 FFmpeg 命令</span>
     </div>
 
     <div class="ctx-divider"></div>
@@ -223,27 +223,27 @@ function onClearAll() {
         <polyline points="9 11 12 14 22 4" />
         <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
       </svg>
-      <span>{{ isSelected(task.id) ? '取消勾选此项' : '勾选此项' }}</span>
+      <span>{{ isSelected(task.id) ? '取消选择' : '选择' }}</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-select-all" @click="onSelectAll">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="9 11 12 14 22 4" />
         <polyline points="5 7 8 10 14 4" />
       </svg>
-      <span>全选所有任务</span>
+      <span>全选</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-invert-select" @click="onInvertSelection">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polyline points="23 4 23 10 17 10" />
         <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
       </svg>
-      <span>反向选择</span>
+      <span>反选</span>
     </div>
     <div class="ctx-item" role="menuitem" tabindex="0" data-testid="ctx-clear-select" @click="onClearSelection">
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       </svg>
-      <span>清空所有勾选</span>
+      <span>取消全选</span>
     </div>
 
     <div class="ctx-divider"></div>
@@ -267,7 +267,7 @@ function onClearAll() {
         <path d="M3 6h18" />
         <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
       </svg>
-      <span>移除所有已勾选项 ({{ planStore.selectedIds.size }})</span>
+      <span>删除所选 ({{ planStore.selectedIds.size }})</span>
     </div>
     <div
       class="ctx-item danger"
@@ -280,7 +280,7 @@ function onClearAll() {
       <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
       </svg>
-      <span>清空全部任务列表</span>
+      <span>清空列表</span>
     </div>
   </div>
 </template>

@@ -37,7 +37,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
     <div class="modal" data-testid="about-modal">
       <div class="modal-head">
         <div class="title-with-badge">
-          <h3>关于与系统信息</h3>
+          <h3>关于</h3>
           <span class="badge">v{{ envStore.version }}</span>
         </div>
         <button class="icon-btn" title="关闭 (Esc)" data-testid="btn-close-about" @click="emit('close')">
@@ -94,7 +94,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
               <span class="hint">未探测到独显或通用核显</span>
             </div>
             <div class="kv">
-              <span>加速分层：</span>
+              <span>硬件加速：</span>
               <b class="tier-tag">{{ hwTier.toUpperCase() }} 硬件加速架构</b>
             </div>
             <div class="kv">
@@ -115,7 +115,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
             <div class="tool-line">
               <span class="tool-name">ffmpeg</span>
               <b class="mono-path" :title="envStore.summary?.ffmpegPath || ''">
-                {{ envStore.summary?.ffmpegPath || "未检测到 ffmpeg 二进制文件" }}
+                {{ envStore.summary?.ffmpegPath || "未找到 ffmpeg" }}
               </b>
               <span class="ver-tag" :class="{ muted: !ffmpegVersion }">
                 {{ ffmpegVersion || "版本未知" }}
@@ -124,7 +124,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
             <div class="tool-line">
               <span class="tool-name">ffprobe</span>
               <b class="mono-path" :title="envStore.summary?.ffprobePath || ''">
-                {{ envStore.summary?.ffprobePath || "未检测到 ffprobe 二进制文件" }}
+                {{ envStore.summary?.ffprobePath || "未找到 ffprobe" }}
               </b>
               <span class="ver-tag" :class="{ muted: !ffprobeVersion }">
                 {{ ffprobeVersion || "版本未知" }}
@@ -151,7 +151,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
                 <svg v-if="isRechecking" class="i spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
-                <span>{{ isRechecking ? "正在重新探测环境…" : "重新检测系统环境" }}</span>
+                <span>{{ isRechecking ? "检测中…" : "重新检测" }}</span>
               </button>
             </div>
           </div>
@@ -159,7 +159,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
       </div>
 
       <div class="modal-foot">
-        <button class="btn btn-primary" data-testid="btn-about-ok" @click="emit('close')">确定</button>
+        <button class="btn btn-primary" data-testid="btn-about-ok" @click="emit('close')">关闭</button>
       </div>
     </div>
   </div>

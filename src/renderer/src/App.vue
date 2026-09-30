@@ -136,7 +136,7 @@ function handleEngineEvent(event: EngineEvent) {
     if (pendingStaleBefore) {
       logStore.append({
         level: "WARN",
-        message: "运行期间修改过转码配置，当前计划已标记为待更新（下次「开始转码」将自动重新推演）",
+        message: "转码期间修改过设置，下次开始时会自动重新扫描",
         timestamp: new Date().toLocaleTimeString(),
       })
     }
@@ -151,12 +151,12 @@ function handleEngineEvent(event: EngineEvent) {
 
 // Right toolbar stats
 const tbStatsText = computed(() => {
-  if (planStore.tasks.length === 0) return "尚无任务计划"
+  if (planStore.tasks.length === 0) return "暂无任务"
   const count = planStore.tasks.length
   const size = formatSize(planStore.totalSize || planStore.planSnapshot?.totalSize || 0)
   const duration = formatDuration(planStore.totalDuration || planStore.planSnapshot?.totalDuration || 0)
   if (planStore.hasStaged) {
-    return `${count} 个文件 (${planStore.stagedCount} 待推演) · ${size} · ${duration}`
+    return `${count} 个文件（${planStore.stagedCount} 个待扫描）· ${size} · ${duration}`
   }
   return `${count} 个任务 · ${size} · ${duration}`
 })
@@ -220,7 +220,7 @@ async function createPlanInternal() {
   planStore.setPlan(plan)
   logStore.append({
     level: "INFO",
-    message: `计划已生成：共 ${plan.totalTasks} 个任务，预估耗时 ${plan.totalDuration.toFixed(1)} 秒`,
+    message: `扫描完成：${plan.totalTasks} 个任务，预计 ${plan.totalDuration.toFixed(1)} 秒`,
     timestamp: new Date().toLocaleTimeString(),
   })
 }
@@ -248,16 +248,16 @@ async function createPlan() {
       planStore.status = "READY"
       logStore.append({
         level: "INFO",
-        message: "已取消：未启用「转码后删除源文件」，计划未生成。",
+        message: "已取消，未启用「转码后删除源文件」",
         timestamp: new Date().toLocaleTimeString(),
       })
       return
     }
     planStore.status = "FAILED"
-    alert(`生成计划失败: ${msg}`)
+    alert(`扫描失败：${msg}`)
     logStore.append({
       level: "ERROR",
-      message: `生成计划失败: ${msg}`,
+      message: `扫描失败：${msg}`,
       timestamp: new Date().toLocaleTimeString(),
     })
   }
@@ -275,8 +275,8 @@ async function startExecution(options?: { dryRun?: boolean }) {
     planStore.tasks.filter((t) => planStore.selectedIds.has(t.id)).map((t) => t.path)
   )
 
-  // 2. 若存在未推演输入或配置已变动 (STALE/hasStaged) 或尚未生成计划，隐式触发流水线推演。
-  //    pendingStale：运行期间被改动的配置（运行中不能立刻标 STALE），也必须触发重推演，
+  // 2. 若存在未扫描的文件、设置已改动（STALE/hasStaged）或尚未扫描，隐式触发扫描。
+  //    pendingStale：运行期间被改动的设置（运行中不能立刻标 STALE），也必须触发重新扫描，
   //    否则会复用主进程冻结的旧 argv，出现「配置已改、实际执行旧参数」。
   if (
     planStore.hasStaged ||
@@ -302,7 +302,7 @@ async function startExecution(options?: { dryRun?: boolean }) {
       planStore.status = "FAILED"
       logStore.append({
         level: "ERROR",
-        message: `准备转码失败: ${msg}`,
+        message: `准备失败：${msg}`,
         timestamp: new Date().toLocaleTimeString(),
       })
       return
@@ -325,7 +325,7 @@ async function startExecution(options?: { dryRun?: boolean }) {
       if (configStore.adv.override) {
         logStore.append({
           level: "INFO",
-          message: "[配置提醒] 已启用覆盖已有产物模式（override: true），同名目标文件将被直接重写",
+          message: "已启用覆盖模式，同名输出文件会被直接重写",
           timestamp: new Date().toLocaleTimeString(),
         })
       }
@@ -335,7 +335,7 @@ async function startExecution(options?: { dryRun?: boolean }) {
         logStore.append({
           level: "INFO",
           message: options?.dryRun
-            ? `重试试运行前 10 帧测试（共 ${retryIds.length} 项）`
+            ? `重试前 10 帧测试（共 ${retryIds.length} 项）`
             : `重试失败转码任务（共 ${retryIds.length} 项）`,
           timestamp: new Date().toLocaleTimeString(),
         })
@@ -356,7 +356,7 @@ async function startExecution(options?: { dryRun?: boolean }) {
   if (configStore.adv.override) {
     logStore.append({
       level: "INFO",
-      message: "[配置提醒] 已启用覆盖已有产物模式（override: true），同名目标文件将被直接重写",
+      message: "已启用覆盖模式，同名输出文件会被直接重写",
       timestamp: new Date().toLocaleTimeString(),
     })
   }
@@ -367,7 +367,7 @@ async function startExecution(options?: { dryRun?: boolean }) {
     logStore.append({
       level: "INFO",
       message: options?.dryRun
-        ? `开始试运行前 10 帧测试（共 ${executableIds.length} 项）`
+        ? `开始前 10 帧测试（共 ${executableIds.length} 项）`
         : `开始执行转码任务（共 ${executableIds.length} 项）`,
       timestamp: new Date().toLocaleTimeString(),
     })
@@ -390,13 +390,13 @@ async function stopExecution() {
     await window.api.stopExecution()
     logStore.append({
       level: "WARN",
-      message: "收到终止信号，正在中止转码进程…",
+      message: "已请求停止，正在结束转码…",
       timestamp: new Date().toLocaleTimeString(),
     })
   } catch (error: unknown) {
     logStore.append({
       level: "ERROR",
-      message: `终止失败: ${error instanceof Error ? error.message : String(error)}`,
+      message: `停止失败：${error instanceof Error ? error.message : String(error)}`,
       timestamp: new Date().toLocaleTimeString(),
     })
   }
@@ -458,7 +458,7 @@ function openOutputDir() {
   if (!dir) {
     logStore.append({
       level: "WARN",
-      message: "尚未确定输出目录：请先生成计划，或在左侧指定输出目录",
+      message: "尚未确定输出文件夹：请先扫描，或在左侧指定输出文件夹",
       timestamp: new Date().toLocaleTimeString(),
     })
     return
@@ -522,7 +522,7 @@ onMounted(async () => {
   // ffmpeg -version 与编码器探测，最慢的一步）/ getExecutionStatus 三个 await。
   // preload 的 onEngineEvent 只做 ipcRenderer.on，**没有缓冲或重放**，所以这段
   // 窗口内发出的一切事件（尤其 session.summary）会永久丢失：一旦丢失，
-  // planStore.status 永远停在 RUNNING —— isBusy() 让「生成计划」被静默 return、
+  // planStore.status 永远停在 RUNNING —— isBusy() 让「扫描」被静默 return、
   // 「开始转码」被禁用，用户只能点「终止」，而引擎其实早已结束。
   // 处理函数只依赖 planStore/logStore（模块级单例）与 window.api，提前订阅安全。
   subscribeEngineEvents()

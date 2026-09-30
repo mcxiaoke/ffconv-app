@@ -109,7 +109,7 @@ function handleDeleteSourceToggle() {
     configStore.adv.deleteSource = true
     logStore.append({
       level: "WARN",
-      message: "已启用高危选项：转码后自动删除源文件（移入安全回收目录）。生成计划时还会再确认一次。",
+      message: "已启用：转码后自动删除源文件（移入回收目录，可恢复）。扫描时会再次确认。",
       timestamp: new Date().toLocaleTimeString(),
     })
   } else {
@@ -125,9 +125,9 @@ function handleDeleteSourceToggle() {
 
 <template>
   <div v-if="show" class="modal-mask" data-testid="settings-modal-mask" @click.self="emit('close')">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="应用设置" data-testid="settings-modal">
+    <div class="modal" role="dialog" aria-modal="true" aria-label="设置" data-testid="settings-modal">
       <div class="modal-title">
-        <span>应用设置</span>
+        <span>设置</span>
         <button class="icon-btn" title="关闭 (Esc)" @click="emit('close')">
           <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -139,47 +139,47 @@ function handleDeleteSourceToggle() {
       <div class="modal-body">
         <!-- 主题切换 -->
         <div class="set-row">
-          <span class="lbl">界面主题</span>
+          <span class="lbl">主题</span>
           <div class="set-box">
             <div class="seg" data-testid="theme-selector">
               <button
                 :class="{ on: currentTheme === 'dark' }"
                 @click="setTheme('dark')"
               >
-                暗黑主题
+                深色
               </button>
               <button
                 :class="{ on: currentTheme === 'light' }"
                 @click="setTheme('light')"
               >
-                明亮主题
+                浅色
               </button>
             </div>
           </div>
         </div>
 
-        <!-- 转码引擎与高级策略 -->
+        <!-- 高级选项 -->
         <div class="set-row">
-          <span class="lbl">转码引擎</span>
+          <span class="lbl">高级</span>
           <div class="set-box" data-testid="advanced-settings-box">
             <div class="field-row two">
               <div class="field">
-                <label class="sub-lbl">硬件加速方式</label>
+                <label class="sub-lbl">硬件加速</label>
                 <select v-model="configStore.adv.hwaccel" class="select" data-testid="select-hwaccel">
-                  <option value="auto">auto · 自动推荐</option>
-                  <option value="cuda">cuda · NVIDIA NVENC</option>
-                  <option value="qsv">qsv · Intel QuickSync</option>
-                  <option value="amf">amf · AMD AMF</option>
-                  <option value="d3d11va">d3d11va · Windows D3D</option>
-                  <option value="cpu">cpu · 仅 CPU 软解软编</option>
+                  <option value="auto">自动</option>
+                  <option value="cuda">NVIDIA NVENC</option>
+                  <option value="qsv">Intel QuickSync</option>
+                  <option value="amf">AMD AMF</option>
+                  <option value="d3d11va">Windows D3D</option>
+                  <option value="cpu">仅 CPU</option>
                 </select>
               </div>
               <div class="field">
-                <label class="sub-lbl">解码模式</label>
+                <label class="sub-lbl">解码</label>
                 <select v-model="configStore.adv.decodeMode" class="select" data-testid="select-decode-mode">
-                  <option value="auto">auto · 自动</option>
-                  <option value="gpu">gpu · 硬件硬解优先</option>
-                  <option value="cpu">cpu · CPU 软解</option>
+                  <option value="auto">自动</option>
+                  <option value="gpu">硬件解码</option>
+                  <option value="cpu">CPU 解码</option>
                 </select>
               </div>
             </div>
@@ -187,7 +187,7 @@ function handleDeleteSourceToggle() {
             <div class="field" style="margin-top: 6px">
               <label class="sub-lbl">
                 并发任务数
-                <span class="hint">1 = 串行，视频建议 1</span>
+                <span class="hint">1 表示逐个转码</span>
               </label>
               <input
                 v-model.number="configStore.adv.jobs"
@@ -201,7 +201,7 @@ function handleDeleteSourceToggle() {
 
             <div class="switches-list" style="margin-top: 8px">
               <div class="sw-row">
-                <span class="sw-lbl">覆盖已存在产物</span>
+                <span class="sw-lbl">覆盖已有文件</span>
                 <span
                   class="sw"
                   :class="{ on: configStore.adv.override }"
@@ -217,7 +217,7 @@ function handleDeleteSourceToggle() {
 
               <div class="sw-row">
                 <span class="sw-lbl">
-                  动漫调优模式 <span class="hint">保线条，收紧质量</span>
+                  动漫模式 <span class="hint">保留线条细节</span>
                 </span>
                 <span
                   class="sw"
@@ -234,7 +234,7 @@ function handleDeleteSourceToggle() {
 
               <div class="sw-row">
                 <span class="sw-lbl">
-                  严格模式 <span class="hint">禁用自动降级与重试</span>
+                  严格模式 <span class="hint">不自动降级或重试</span>
                 </span>
                 <span
                   class="sw"
@@ -251,7 +251,7 @@ function handleDeleteSourceToggle() {
 
               <div class="sw-row">
                 <span class="sw-lbl err">
-                  转码后删除源文件 <span class="hint">移入安全回收目录</span>
+                  转码后删除源文件 <span class="hint">移入回收目录，可恢复</span>
                 </span>
                 <span
                   class="sw err-sw"
@@ -271,7 +271,7 @@ function handleDeleteSourceToggle() {
 
         <!-- 自定义工具路径 -->
         <div class="set-row">
-          <span class="lbl">工具路径</span>
+          <span class="lbl">外部工具</span>
           <div class="set-box">
             <div class="tool-row">
               <span class="tl">ffmpeg</span>
@@ -279,10 +279,10 @@ function handleDeleteSourceToggle() {
                 v-model="customFfmpeg"
                 class="input grow"
                 data-testid="input-custom-ffmpeg"
-                placeholder="留空使用系统默认探测路径"
+                placeholder="留空则自动查找"
               />
               <button class="btn btn-sm btn-secondary" title="浏览文件" @click="pickToolPath('ffmpeg')">浏览...</button>
-              <button class="btn btn-sm" @click="customFfmpeg = ''">重置</button>
+              <button class="btn btn-sm" @click="customFfmpeg = ''">清除</button>
             </div>
             <div class="tool-row">
               <span class="tl">ffprobe</span>
@@ -290,23 +290,23 @@ function handleDeleteSourceToggle() {
                 v-model="customFfprobe"
                 class="input grow"
                 data-testid="input-custom-ffprobe"
-                placeholder="留空使用系统默认探测路径"
+                placeholder="留空则自动查找"
               />
               <button class="btn btn-sm btn-secondary" title="浏览文件" @click="pickToolPath('ffprobe')">浏览...</button>
-              <button class="btn btn-sm" @click="customFfprobe = ''">重置</button>
+              <button class="btn btn-sm" @click="customFfprobe = ''">清除</button>
             </div>
             <div class="tool-row">
               <span class="tl">mediainfo</span>
               <input
                 v-model="customMediainfo"
                 class="input grow"
-                placeholder="留空使用系统默认探测路径"
+                placeholder="留空则自动查找"
               />
               <button class="btn btn-sm btn-secondary" title="浏览文件" @click="pickToolPath('mediainfo')">浏览...</button>
-              <button class="btn btn-sm" @click="customMediainfo = ''">重置</button>
+              <button class="btn btn-sm" @click="customMediainfo = ''">清除</button>
             </div>
             <div class="tool-hint">
-              ffprobe 为主探测工具；mediainfo 仅在 ffprobe 失败时作为兜底（留空 = 使用系统 PATH）
+              ffprobe 为主，mediainfo 仅在 ffprobe 失败时使用；留空表示从系统 PATH 查找
             </div>
           </div>
         </div>

@@ -37,8 +37,8 @@ async function pickDirectory() {
         </svg>
       </div>
 
-      <div class="hero-title">拖入媒体文件或目录开始转码</div>
-      <div class="hero-desc">支持全域拖拽投放或点击下方按钮添加。预设自动按硬件优化分层推演。</div>
+      <div class="hero-title">将文件或文件夹拖到这里</div>
+      <div class="hero-desc">支持视频和音频，也可以直接选择整个文件夹。</div>
 
       <div class="hero-actions">
         <button class="btn btn-secondary" @click="pickFiles">
@@ -52,15 +52,15 @@ async function pickDirectory() {
           <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
           </svg>
-          选择目录
+          选择文件夹
         </button>
       </div>
 
       <div class="hero-badges">
         <span class="badge">MP4 / MKV / MOV</span>
         <span class="badge">HEVC / H.264 / AV1</span>
-        <span class="badge">音频提取 / 压制</span>
-        <span class="badge">硬件加速分层</span>
+        <span class="badge">音频提取 / 压缩</span>
+        <span class="badge">硬件加速</span>
       </div>
     </div>
   </div>

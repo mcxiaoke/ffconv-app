@@ -16,7 +16,7 @@ async function stageTwo(page: import("@playwright/test").Page) {
   }
   await expect(page.locator('[data-testid="task-row"]')).toHaveCount(2, { timeout: 20000 })
   await page.locator('[data-testid="btn-plan"]').click()
-  await expect(page.locator('[data-testid="state-tag"]')).toContainText(/待执行/, { timeout: 30000 })
+  await expect(page.locator('[data-testid="state-tag"]')).toContainText(/就绪/, { timeout: 30000 })
 }
 
 test.describe("Regressions - task duration projection", () => {

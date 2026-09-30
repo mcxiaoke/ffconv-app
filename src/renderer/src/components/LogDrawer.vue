@@ -117,27 +117,27 @@ async function copyAll() {
         class="drawer-resizer"
         :class="{ dragging: isResizing }"
         data-testid="log-drawer-resizer"
-        title="拖动调整日志面板宽度"
+        title="拖动调整宽度"
         @mousedown.stop="startResizing"
       ></div>
 
       <div class="log-head">
         <div class="log-title-zone">
-          <span class="log-title">运行日志</span>
+          <span class="log-title">日志</span>
           <span class="log-count">{{ logStore.filteredLogs.length }} 条</span>
           <span
             v-if="logStore.focusedTaskId"
             class="focus-pill"
-            title="点击取消聚焦过滤"
+            title="点击取消筛选"
             @click="logStore.clearFocus"
           >
-            已聚焦 [{{ logStore.focusedTaskId }}] ✕
+            仅看 {{ logStore.focusedTaskId }} ✕
           </span>
         </div>
 
         <div class="log-actions">
           <select v-model="logStore.filter" class="mini-select">
-            <option value="ALL">全部（隐藏 DEBUG）</option>
+            <option value="ALL">全部</option>
             <option value="INFO">INFO</option>
             <option value="CMD">CMD</option>
             <option value="WARN">WARN</option>
@@ -148,15 +148,15 @@ async function copyAll() {
           <button
             class="btn btn-sm"
             data-testid="btn-toggle-log-width"
-            :title="isExpanded ? '恢复标准宽度 (680px)' : '切换宽屏日志模式'"
+            :title="isExpanded ? '恢复宽度' : '加宽面板'"
             @click="toggleExpandWidth"
           >
-            {{ isExpanded ? '标准宽度' : '一键加宽' }}
+            {{ isExpanded ? '恢复宽度' : '加宽' }}
           </button>
           <button class="btn btn-sm" data-testid="btn-copy-log" @click="copyAll">
-            {{ copied ? '已复制 ✓' : '复制' }}
+            {{ copied ? '已复制' : '复制' }}
           </button>
-          <button class="btn btn-sm" @click="logStore.clearLogs">清屏</button>
+          <button class="btn btn-sm" @click="logStore.clearLogs">清空</button>
           <button class="close-btn" data-testid="btn-close-log" @click="close">✕</button>
         </div>
       </div>
@@ -172,7 +172,7 @@ async function copyAll() {
           <span class="txt">{{ item.text }}</span>
         </div>
         <div v-if="logStore.filteredLogs.length === 0" class="log-empty">
-          暂无符合过滤条件的日志
+          暂无日志
         </div>
       </div>
     </aside>

@@ -20,15 +20,18 @@ const emit = defineEmits<{
 const plan = usePlanStore()
 const logStore = useLogStore()
 
+// 状态标签：措辞对齐主流转码工具（HandBrake / Shutter Encoder / FFmpeg Batch）
+// 的习惯用词——「扫描」对应读取媒体并按当前设置算出每个文件的目标（ffmpeg 的
+// scan 术语），「就绪/扫描中/转码中/停止中/完成/失败」都是通用说法。
 const STATE_CONFIG: Record<string, { label: string; cls: string }> = {
-  IDLE: { label: "待机", cls: "" },
-  PLANNING: { label: "分析中", cls: "info" },
-  READY: { label: "待执行", cls: "" },
+  IDLE: { label: "空闲", cls: "" },
+  PLANNING: { label: "扫描中", cls: "info" },
+  READY: { label: "就绪", cls: "" },
   RUNNING: { label: "转码中", cls: "info" },
-  STOPPING: { label: "正在停止", cls: "warn" },
+  STOPPING: { label: "停止中", cls: "warn" },
   STOPPED: { label: "已停止", cls: "" },
-  COMPLETED: { label: "已完成", cls: "ok" },
-  FAILED: { label: "异常", cls: "err" },
+  COMPLETED: { label: "完成", cls: "ok" },
+  FAILED: { label: "失败", cls: "err" },
   STALE: { label: "参数已修改", cls: "warn" },
 }
 
@@ -39,7 +42,7 @@ const stateInfo = computed(() => {
     return STATE_CONFIG[plan.status] || { label: plan.status, cls: "" }
   }
   if (plan.hasStaged) {
-    return { label: "待规划", cls: "warn" }
+    return { label: "待扫描", cls: "warn" }
   }
   return STATE_CONFIG[plan.status] || { label: plan.status, cls: "" }
 })
@@ -62,20 +65,20 @@ const canStart = computed(() => {
 })
 
 const startButtonText = computed(() => {
-  if (plan.status === "PLANNING") return "正在准备…"
+  if (plan.status === "PLANNING") return "扫描中…"
   if (props.isIngesting) return "读取媒体中…"
-  if (plan.status === "RUNNING") return "正在转码…"
-  if (plan.status === "STOPPING") return "正在停止…"
+  if (plan.status === "RUNNING") return "转码中…"
+  if (plan.status === "STOPPING") return "停止中…"
 
   if (plan.tasks.length > 0 && selectedExecutableTasks.value.length === 0) {
     if (failedTasks.value.length > 0) {
-      return `重试失败项 (${failedTasks.value.length})`
+      return `重试 (${failedTasks.value.length})`
     }
-    return "已全部完成"
+    return "已完成"
   }
 
   const count = selectedExecutableTasks.value.length
-  return count > 0 ? `开始转码 · ${count}` : "开始转码"
+  return count > 0 ? `开始 (${count})` : "开始"
 })
 
 function toggleTheme() {
@@ -98,7 +101,7 @@ function toggleTheme() {
       <button
         class="icon-btn sidebar-btn"
         data-testid="btn-sidebar-toggle"
-        title="收起/展开左侧配置栏 (Ctrl+B)"
+        title="显示/隐藏转码设置 (Ctrl+B)"
         @click="$emit('toggle-sidebar')"
       >
         <svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -127,7 +130,7 @@ function toggleTheme() {
           <circle cx="11" cy="11" r="7" />
           <path d="M20 20l-3.5-3.5" />
         </svg>
-        <span>{{ plan.status === "PLANNING" ? "分析中…" : (plan.hasStaged ? "生成计划" : (plan.status === "STALE" ? "更新计划" : "生成计划")) }}</span>
+        <span>{{ plan.status === "PLANNING" ? "扫描中…" : (plan.status === "STALE" ? "重新扫描" : "扫描") }}</span>
       </button>
 
       <button
@@ -146,14 +149,14 @@ function toggleTheme() {
         class="btn btn-secondary"
         :disabled="!canStart"
         data-testid="btn-dry-run"
-        title="仅编码前 10 帧验证硬件加速与滤镜兼容性，不产生实际产物文件"
+        title="只编码前 10 帧，检查硬件加速与滤镜是否可用，不产生文件"
         @click="emit('start-execution', { dryRun: true })"
       >
         <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polygon points="5 3 19 12 5 21 5 3" />
           <line x1="19" y1="5" x2="19" y2="19" />
         </svg>
-        <span>试运行</span>
+        <span>测试</span>
       </button>
 
       <button
@@ -165,7 +168,7 @@ function toggleTheme() {
         <svg class="i sm" viewBox="0 0 24 24" fill="currentColor">
           <rect x="6" y="6" width="12" height="12" rx="1.5" />
         </svg>
-        <span>终止</span>
+        <span>停止</span>
       </button>
 
       <button
@@ -177,14 +180,14 @@ function toggleTheme() {
         清空
       </button>
 
-      <!-- 待推演或参数变更微调提示 (非阻断) -->
+      <!-- 有新文件未扫描，或参数已修改（均非阻断，开始时会自动重新扫描） -->
       <div v-if="plan.hasStaged" class="stale-alert" data-testid="stale-alert">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="10" />
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
         </svg>
-        <span>新媒体待转码 · 点击开始将自动推演</span>
+        <span>有新增文件，点击「开始」将自动扫描</span>
       </div>
       <div v-else-if="plan.status === 'STALE'" class="stale-alert" data-testid="stale-alert">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -192,7 +195,7 @@ function toggleTheme() {
           <line x1="12" y1="8" x2="12" y2="12" />
           <line x1="12" y1="16" x2="12.01" y2="16" />
         </svg>
-        <span>参数已变更 · 可直接开始转码</span>
+        <span>参数已修改，点击「开始」将自动重新扫描</span>
       </div>
     </div>
 

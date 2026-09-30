@@ -50,9 +50,9 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     await taskRow.click({ button: "right" })
     await expect(taskRow).toHaveClass(/sel/)
 
-    // Verify state is READY (待执行)
+    // Verify state is READY (就绪)
     const stateTag = appWindow.locator('[data-testid="state-tag"]')
-    await expect(stateTag).toContainText("待执行")
+    await expect(stateTag).toContainText("就绪")
 
     const btnStart = appWindow.locator('[data-testid="btn-start"]')
     await expect(btnStart).toBeEnabled()
@@ -66,7 +66,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     await expect(inspector).toContainText("TEST2__h264_60fps_1080.mp4")
     await expect(inspector).toContainText("1920×1080")
     await expect(inspector).toContainText("8 bit")
-    await expect(inspector).toContainText("FFmpeg 命令行")
+    await expect(inspector).toContainText("FFmpeg 命令")
 
     // Test copy command button
     const btnCopyCmd = appWindow.locator('[data-testid="btn-copy-cmd"]')
@@ -106,10 +106,10 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     // Check dirty indicator and STALE banner
     const staleAlert = appWindow.locator('[data-testid="stale-alert"]')
     await expect(staleAlert).toBeVisible()
-    await expect(staleAlert).toContainText("参数已变更 · 可直接开始转码")
+    await expect(staleAlert).toContainText("参数已修改")
 
     // Verify button text changed to "更新计划" and Start button remains enabled (one-click pipeline)
-    await expect(btnPlan).toContainText("更新计划")
+    await expect(btnPlan).toContainText("重新扫描")
     await expect(btnStart).toBeEnabled()
 
     // Test Shana compare card detail toggle in TaskTable
@@ -119,8 +119,8 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
 
     const shanaCard = appWindow.locator('[data-testid="shana-compare-card"]')
     await expect(shanaCard).toBeVisible()
-    await expect(shanaCard).toContainText("【输入源媒体】")
-    await expect(shanaCard).toContainText("【目标转码配置】")
+    await expect(shanaCard).toContainText("源文件")
+    await expect(shanaCard).toContainText("输出设置")
 
     const btnCollapseDetail = appWindow.locator('[data-testid="btn-collapse-detail"]')
     await btnCollapseDetail.click()
@@ -129,7 +129,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     // Click Update Plan to re-synchronize
     await btnPlan.click()
     await expect(staleAlert).not.toBeVisible({ timeout: 15000 })
-    await expect(btnPlan).toContainText("生成计划")
+    await expect(btnPlan).toContainText("扫描")
     await expect(btnStart).toBeEnabled()
 
     // 5. Test Log drawer & Copy log
@@ -154,7 +154,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
 
     const settingsModal = appWindow.locator('[data-testid="settings-modal"]')
     await expect(settingsModal).toBeVisible()
-    await expect(settingsModal).toContainText("工具路径")
+    await expect(settingsModal).toContainText("外部工具")
 
     const btnCloseSettings = settingsModal.locator(".icon-btn")
     await btnCloseSettings.click()
@@ -201,7 +201,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     await expect(formatTag).toHaveText("MP4")
 
     const taskStatus = appWindow.locator('[data-testid="task-status"]').first()
-    await expect(taskStatus).toHaveText("待规划")
+    await expect(taskStatus).toHaveText("待扫描")
 
     // Verify bottom preview bar
     const bottomBar = appWindow.locator('[data-testid="table-bottom-bar"]')
@@ -211,7 +211,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     const quickPreview = appWindow.locator('[data-testid="task-quick-preview"]')
     await expect(quickPreview).toBeVisible()
     await expect(quickPreview).toContainText("1920x1080")
-    await expect(quickPreview).toContainText("待推演")
+    await expect(quickPreview).toContainText("未扫描")
 
     // 3. Test single row deletion
     const btnRemove = appWindow.locator('[data-testid="btn-remove-task"]').first()
@@ -312,7 +312,7 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     const btnToggleWidth = appWindow.locator('[data-testid="btn-toggle-log-width"]')
     await expect(btnToggleWidth).toBeVisible()
     await btnToggleWidth.click()
-    await expect(btnToggleWidth).toContainText("标准宽度")
+    await expect(btnToggleWidth).toContainText("恢复宽度")
 
     const btnCloseLog = appWindow.locator('[data-testid="btn-close-log"]')
     await btnCloseLog.click()

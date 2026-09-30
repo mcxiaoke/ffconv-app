@@ -55,7 +55,7 @@ test.describe("MediCli Desktop - Real Transcode Workflow Spec", () => {
     await expect(taskRow).toBeVisible({ timeout: 15000 })
 
     const stateTag = appWindow.locator('[data-testid="state-tag"]')
-    await expect(stateTag).toHaveText("待执行", { timeout: 15000 })
+    await expect(stateTag).toHaveText("就绪", { timeout: 15000 })
 
     await appWindow.screenshot({ path: path.join(screenshotDir, "02-plan-ready.png") })
 
@@ -66,13 +66,13 @@ test.describe("MediCli Desktop - Real Transcode Workflow Spec", () => {
 
     // 5. Verify Running State
     const taskStatus = appWindow.locator('[data-testid="task-status"]').first()
-    await expect(taskStatus).toHaveText(/转码中|已完成/, { timeout: 15000 })
+    await expect(taskStatus).toHaveText(/转码中|完成/, { timeout: 15000 })
 
     await appWindow.screenshot({ path: path.join(screenshotDir, "03-transcoding-running.png") })
 
     // 6. Wait for Transcode Completion (file is short, ~1 second video)
-    await expect(taskStatus).toHaveText("已完成", { timeout: 45000 })
-    await expect(stateTag).toContainText(/完成|待机/)
+    await expect(taskStatus).toHaveText("完成", { timeout: 45000 })
+    await expect(stateTag).toContainText(/完成|空闲/)
 
     // Start button must be disabled after all tasks finish
     await expect(btnStart).toBeDisabled()
@@ -146,26 +146,26 @@ test.describe("MediCli Desktop - Real Transcode Workflow Spec", () => {
 
     const taskRow = appWindow.locator('[data-testid="task-row"]').first()
     await expect(taskRow).toBeVisible({ timeout: 15000 })
-    await expect(appWindow.locator('[data-testid="task-status"]').first()).toHaveText("待规划")
+    await expect(appWindow.locator('[data-testid="task-status"]').first()).toHaveText("待扫描")
 
     // 2. Set output directory
     const inputOutputDir = appWindow.locator('[data-testid="input-output-dir"]')
     await inputOutputDir.fill(outputDir)
     await appWindow.locator('[data-testid="select-output-mode"]').selectOption("file")
 
-    // 3. Directly click "开始转码" WITHOUT clicking "生成计划"
+    // 3. Directly click "开始" WITHOUT clicking "扫描"
     const btnStart = appWindow.locator('[data-testid="btn-start"]')
     await expect(btnStart).toBeEnabled()
     await btnStart.click()
 
     // 4. Verify it auto-plans and enters running/completed state
     const taskStatus = appWindow.locator('[data-testid="task-status"]').first()
-    await expect(taskStatus).toHaveText(/转码中|已完成/, { timeout: 20000 })
+    await expect(taskStatus).toHaveText(/转码中|完成/, { timeout: 20000 })
 
     await appWindow.screenshot({ path: path.join(screenshotDir, "08-one-click-auto-plan-running.png") })
 
     // Wait for completion
-    await expect(taskStatus).toHaveText("已完成", { timeout: 45000 })
+    await expect(taskStatus).toHaveText("完成", { timeout: 45000 })
     await appWindow.screenshot({ path: path.join(screenshotDir, "09-one-click-completed-playback.png") })
 
     // Verify output file exists

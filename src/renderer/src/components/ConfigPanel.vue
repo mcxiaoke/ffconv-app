@@ -120,7 +120,7 @@ watch(
     if (newVal !== undefined && oldVal !== undefined && newVal !== oldVal) {
       logStore.append({
         level: "DEBUG",
-        message: `修改视频质量 CRF: ${newVal === 0 ? "跟随预设" : newVal}`,
+        message: `修改视频质量 CRF: ${newVal === 0 ? "与预设相同" : newVal}`,
         timestamp: new Date().toLocaleTimeString(),
       })
     }
@@ -133,7 +133,7 @@ watch(
     if (newVal !== undefined && oldVal !== undefined && newVal !== oldVal) {
       logStore.append({
         level: "DEBUG",
-        message: `修改视频码率: ${newVal || "跟随预设"}`,
+        message: `修改视频码率: ${newVal || "与预设相同"}`,
         timestamp: new Date().toLocaleTimeString(),
       })
     }
@@ -146,7 +146,7 @@ watch(
     if (newVal !== undefined && oldVal !== undefined && newVal !== oldVal) {
       logStore.append({
         level: "DEBUG",
-        message: `修改音频编码: ${newVal || "跟随预设"}`,
+        message: `修改音频编码: ${newVal || "与预设相同"}`,
         timestamp: new Date().toLocaleTimeString(),
       })
     }
@@ -159,7 +159,7 @@ watch(
     if (newVal !== undefined && oldVal !== undefined && newVal !== oldVal) {
       logStore.append({
         level: "DEBUG",
-        message: `修改音频码率: ${newVal || "跟随预设"}`,
+        message: `修改音频码率: ${newVal || "与预设相同"}`,
         timestamp: new Date().toLocaleTimeString(),
       })
     }
@@ -371,18 +371,18 @@ const audioSummary = computed(() => {
           <line x1="9" y1="8" x2="15" y2="8" />
           <line x1="17" y1="16" x2="23" y2="16" />
         </svg>
-        <span>转码配置</span>
+        <span>转码设置</span>
       </div>
       <button
         class="side-collapse-btn"
         data-testid="btn-sidebar-collapse"
-        title="收起配置栏 (Ctrl+B)"
+        title="隐藏转码设置 (Ctrl+B)"
         @click="emit('collapse')"
       >
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="15 18 9 12 15 6" />
         </svg>
-        <span>收起</span>
+        <span>隐藏</span>
       </button>
     </div>
 
@@ -391,21 +391,21 @@ const audioSummary = computed(() => {
         <rect x="3" y="11" width="18" height="11" rx="2" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </svg>
-      <span>转码进行中 · 参数已锁定</span>
+      <span>转码中，参数已锁定</span>
     </div>
 
-    <!-- 1 输入与输出 -->
+    <!-- 1 文件与输出 -->
     <section class="card" data-testid="card-input-output">
       <div class="card-title">
-        <span>输入与输出</span>
-        <span class="sub">文件 / 目录 / 命名</span>
+        <span>文件与输出</span>
+        <span class="sub">输入 / 输出位置 / 命名</span>
       </div>
       <div class="card-body">
         <div
           class="dropzone"
           tabindex="0"
           role="button"
-          aria-label="拖入或点击添加媒体目录"
+          aria-label="拖放或点击选择文件夹"
           data-testid="side-dropzone"
           @dragover.prevent
           @drop.stop="handleDrop"
@@ -416,7 +416,7 @@ const audioSummary = computed(() => {
             <path d="M12 3v13" />
             <path d="M7 8l5-5 5 5" />
           </svg>
-          <span>拖入媒体文件或目录，或点击浏览目录</span>
+          <span>拖放文件或文件夹到此处，点击可选择文件夹</span>
         </div>
 
         <div class="btn-row">
@@ -430,7 +430,7 @@ const audioSummary = computed(() => {
             <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
               <path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
             </svg>
-            添加目录
+            添加文件夹
           </button>
         </div>
 
@@ -438,7 +438,7 @@ const audioSummary = computed(() => {
           <input
             v-model="manualPathInput"
             class="input grow"
-            placeholder="粘贴文件/目录路径，回车添加"
+            placeholder="粘贴文件或文件夹路径，回车添加"
             data-testid="input-manual-path"
             @keyup.enter="addManualPath"
           />
@@ -455,7 +455,7 @@ const audioSummary = computed(() => {
             </div>
             <button
               class="chip-x"
-              title="移除该项"
+              title="移除"
               :data-testid="`btn-remove-input-${idx}`"
               @click="removeInput(idx)"
             >
@@ -467,28 +467,28 @@ const audioSummary = computed(() => {
         <div class="divider"></div>
 
         <div class="field">
-          <label class="lbl">输出目录 <span class="hint">留空 = 源文件同目录</span></label>
+          <label class="lbl">输出位置 <span class="hint">留空表示与源文件同目录</span></label>
           <div class="inline-row">
             <input
               :value="config.outputDir"
               class="input grow"
-              placeholder="选择或输入输出目录"
+              placeholder="选择或输入输出文件夹"
               data-testid="input-output-dir"
               @input="config.setCustomOutputDir(($event.target as HTMLInputElement).value)"
               @change="config.commitCustomOutputDir(($event.target as HTMLInputElement).value)"
             />
             <button class="btn btn-secondary" data-testid="btn-select-output-dir" @click="pickOutputDir">
-              选择目录
+              选择文件夹
             </button>
           </div>
         </div>
 
         <div class="field">
-          <label class="lbl">输出模式</label>
+          <label class="lbl">目录结构</label>
           <select v-model="config.outputMode" class="select" data-testid="select-output-mode">
-            <option value="dir">dir · 保留父目录名（推荐）</option>
-            <option value="tree">tree · 保持完整目录树</option>
-            <option value="file">file · 直接扁平写入输出目录</option>
+            <option value="dir">保留上级文件夹名</option>
+            <option value="tree">保留完整目录结构</option>
+            <option value="file">全部输出到同一文件夹</option>
           </select>
         </div>
 
@@ -509,11 +509,10 @@ const audioSummary = computed(() => {
     <section class="card" data-testid="card-preset">
       <div class="card-title">
         <span>预设</span>
-        <span class="sub">必选 · 决定输出编码与画质</span>
+        <span class="sub">决定输出编码与画质</span>
       </div>
       <div class="card-body">
         <div class="field">
-          <label class="lbl">预设模板</label>
           <select v-model="config.preset" class="select" data-testid="select-preset">
             <optgroup v-for="(presets, group) in presetGroups" :key="group" :label="group">
               <option v-for="p in presets" :key="p.name" :value="p.name">
@@ -539,11 +538,11 @@ const audioSummary = computed(() => {
       </div>
     </section>
 
-    <!-- 3 视频参数 -->
+    <!-- 3 视频 -->
     <section class="card" data-testid="card-video">
       <div class="card-title toggle" @click="isVideoOpen = !isVideoOpen">
         <span class="title-with-sum">
-          视频参数
+          视频
           <span class="sum" data-testid="video-summary">{{ videoSummary }}</span>
         </span>
         <div class="title-right">
@@ -551,10 +550,10 @@ const audioSummary = computed(() => {
             v-if="config.videoDirtyCount > 0"
             class="reset-link"
             data-testid="btn-reset-video"
-            title="全部还原为预设默认"
+            title="恢复预设值"
             @click.stop="config.resetVideoTune()"
           >
-            全部还原 ({{ config.videoDirtyCount }})
+            重置 ({{ config.videoDirtyCount }})
           </a>
           <svg class="chev i sm" :class="{ open: isVideoOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9" />
@@ -563,17 +562,17 @@ const audioSummary = computed(() => {
       </div>
 
       <div v-show="isVideoOpen" class="card-body" data-testid="video-body">
-        <!-- 长边尺寸 -->
+        <!-- 分辨率 -->
         <div class="field">
           <div class="field-label-row">
             <label class="lbl">
-              长边尺寸 <span class="hint">只缩不放大</span>
+              分辨率 <span class="hint">按长边，不放大</span>
               <span v-if="config.isDimensionDirty" class="dot-dirty"></span>
             </label>
             <button
               v-if="config.isDimensionDirty"
               class="undo-btn"
-              title="恢复预设默认"
+              title="恢复预设值"
               @click="config.resetParam('dimension')"
             >
               ↺
@@ -581,7 +580,7 @@ const audioSummary = computed(() => {
           </div>
           <div class="inline-row">
             <select v-model.number="config.tune.dimension" class="select grow" data-testid="select-dimension">
-              <option :value="0">0 · 保持源分辨率</option>
+              <option :value="0">与源文件相同</option>
               <option :value="3840">3840 · 4K UHD</option>
               <option :value="2560">2560 · 2K QHD</option>
               <option :value="1920">1920 · 1080p FHD</option>
@@ -601,13 +600,13 @@ const audioSummary = computed(() => {
         <div class="field">
           <div class="field-label-row">
             <label class="lbl">
-              视频质量 <span class="hint">CRF · 0-51 (0=跟随预设)</span>
+              质量 <span class="hint">CRF，0 表示与预设相同</span>
               <span v-if="config.isQualityDirty" class="dot-dirty"></span>
             </label>
             <button
               v-if="config.isQualityDirty"
               class="undo-btn"
-              title="恢复预设默认"
+              title="恢复预设值"
               @click="config.resetParam('quality')"
             >
               ↺
@@ -644,7 +643,7 @@ const audioSummary = computed(() => {
             <button
               v-if="config.isBitrateDirty"
               class="undo-btn"
-              title="恢复预设默认"
+              title="恢复预设值"
               @click="config.resetParam('bitrate')"
             >
               ↺
@@ -652,12 +651,12 @@ const audioSummary = computed(() => {
           </div>
           <div class="inline-row">
             <select v-model="config.tune.bitrate" class="select grow" data-testid="select-bitrate">
-              <option value="">留空 · 跟随预设</option>
-              <option value="1500k">1500k · 低码率</option>
-              <option value="2500k">2500k · 标准 1080p</option>
-              <option value="4M">4M · 高清 1080p</option>
-              <option value="8M">8M · 2K 优质</option>
-              <option value="15M">15M · 4K 超清</option>
+              <option value="">与预设相同</option>
+              <option value="1500k">1500k</option>
+              <option value="2500k">2500k</option>
+              <option value="4M">4M</option>
+              <option value="8M">8M</option>
+              <option value="15M">15M</option>
             </select>
             <input
               v-model="config.tune.bitrate"
@@ -680,57 +679,57 @@ const audioSummary = computed(() => {
               <button
                 v-if="config.isFpsDirty"
                 class="undo-btn"
-                title="恢复预设默认"
+                title="恢复预设值"
                 @click="config.resetParam('fps')"
               >
                 ↺
               </button>
             </div>
             <select v-model.number="config.tune.fps" class="select" data-testid="select-fps">
-              <option :value="0">0 · 保持源帧率</option>
+              <option :value="0">与源文件相同</option>
               <option :value="23.976">23.976 fps</option>
-              <option :value="24">24 fps · 电影</option>
-              <option :value="25">25 fps · PAL</option>
+              <option :value="24">24 fps（电影）</option>
+              <option :value="25">25 fps（PAL）</option>
               <option :value="29.97">29.97 fps</option>
               <option :value="30">30 fps</option>
-              <option :value="60">60 fps · 高帧率</option>
+              <option :value="60">60 fps</option>
             </select>
           </div>
 
-          <!-- 倍速 -->
+          <!-- 速度 -->
           <div class="field">
             <div class="field-label-row">
               <label class="lbl">
-                倍速 <span class="hint">0.5-2.0</span>
+                速度 <span class="hint">0.5-2.0</span>
                 <span v-if="config.isSpeedDirty" class="dot-dirty"></span>
               </label>
               <button
                 v-if="config.isSpeedDirty"
                 class="undo-btn"
-                title="恢复预设默认"
+                title="恢复预设值"
                 @click="config.resetParam('speed')"
               >
                 ↺
               </button>
             </div>
             <select v-model.number="config.tune.speed" class="select" data-testid="select-speed">
-              <option :value="0">0 · 不变速</option>
-              <option :value="0.5">0.5x · 慢速</option>
+              <option :value="0">不变速</option>
+              <option :value="0.5">0.5x</option>
               <option :value="0.75">0.75x</option>
               <option :value="1.25">1.25x</option>
               <option :value="1.5">1.5x</option>
-              <option :value="2.0">2.0x · 双倍速</option>
+              <option :value="2.0">2.0x</option>
             </select>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 4 音频参数 -->
+    <!-- 4 音频 -->
     <section class="card" data-testid="card-audio">
       <div class="card-title toggle" @click="isAudioOpen = !isAudioOpen">
         <span class="title-with-sum">
-          音频参数
+          音频
           <span class="sum" data-testid="audio-summary">{{ audioSummary }}</span>
         </span>
         <div class="title-right">
@@ -738,10 +737,10 @@ const audioSummary = computed(() => {
             v-if="config.audioDirtyCount > 0"
             class="reset-link"
             data-testid="btn-reset-audio"
-            title="全部还原为预设默认"
+            title="恢复预设值"
             @click.stop="config.resetAudioTune()"
           >
-            全部还原 ({{ config.audioDirtyCount }})
+            重置 ({{ config.audioDirtyCount }})
           </a>
           <svg class="chev i sm" :class="{ open: isAudioOpen }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="6 9 12 15 18 9" />
@@ -753,52 +752,52 @@ const audioSummary = computed(() => {
         <div class="field">
           <div class="field-label-row">
             <label class="lbl">
-              音频编码
+              编码
               <span v-if="config.isAudioCodecDirty" class="dot-dirty"></span>
             </label>
             <button
               v-if="config.isAudioCodecDirty"
               class="undo-btn"
-              title="恢复预设默认"
+              title="恢复预设值"
               @click="config.resetParam('audioCodec')"
             >
               ↺
             </button>
           </div>
           <select v-model="config.tune.audioCodec" class="select" data-testid="select-audio-codec">
-            <option value="">留空 · 跟随预设</option>
-            <option value="copy">copy · 流复制（原音）</option>
-            <option value="aac">aac · 标准通用</option>
-            <option value="libopus">libopus · 高保真低码率</option>
-            <option value="mp3">mp3 · 兼容旧设备</option>
-            <option value="flac">flac · 无损音频</option>
+            <option value="">与预设相同</option>
+            <option value="copy">copy（不重编码）</option>
+            <option value="aac">aac</option>
+            <option value="libopus">libopus</option>
+            <option value="mp3">mp3</option>
+            <option value="flac">flac（无损）</option>
           </select>
         </div>
 
         <div class="field">
           <div class="field-label-row">
             <label class="lbl">
-              音频码率
+              码率
               <span v-if="config.isAudioBitrateDirty" class="dot-dirty"></span>
             </label>
             <button
               v-if="config.isAudioBitrateDirty"
               class="undo-btn"
-              title="恢复预设默认"
+              title="恢复预设值"
               @click="config.resetParam('audioBitrate')"
             >
               ↺
             </button>
           </div>
           <select v-model="config.tune.audioBitrate" class="select" data-testid="select-audio-bitrate">
-            <option value="">留空 · 跟随预设</option>
-            <option value="48k">48k · 极低码率 (Opus 语音推荐)</option>
-            <option value="64k">64k · 低码率 (Opus 音乐推荐)</option>
-            <option value="96k">96k · 语音/低码率</option>
-            <option value="128k">128k · 标准清晰度</option>
-            <option value="192k">192k · 高音质</option>
-            <option value="256k">256k · 录音室级别</option>
-            <option value="320k">320k · 极高码率</option>
+            <option value="">与预设相同</option>
+            <option value="48k">48k</option>
+            <option value="64k">64k</option>
+            <option value="96k">96k</option>
+            <option value="128k">128k</option>
+            <option value="192k">192k</option>
+            <option value="256k">256k</option>
+            <option value="320k">320k</option>
           </select>
         </div>
       </div>

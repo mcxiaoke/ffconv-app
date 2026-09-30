@@ -69,9 +69,9 @@ test.describe("MediCli Desktop - Unified Input Ingest Spec", () => {
     await expect(chipList).toContainText("TEST2__h264_422_8bit.mkv")
 
     // plan store is marked STALE while keeping exactly the one successfully staged task.
-    // The staged task is still present so hasStaged wins and the tag reads 待规划.
+    // The staged task is still present so hasStaged wins and the tag reads 待扫描.
     const stateTag = appWindow.locator('[data-testid="state-tag"]')
-    await expect(stateTag).toContainText("待规划")
+    await expect(stateTag).toContainText("待扫描")
     await expect(appWindow.locator('[data-testid="task-row"]')).toHaveCount(1)
 
     // 4. Failure is recorded in the log drawer

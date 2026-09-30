@@ -27,18 +27,18 @@ const activeFileName = computed(() => {
     return currentRunningTask.value?.name || "正在处理任务…"
   }
   if (planStore.status === "COMPLETED") {
-    return "全部任务转码完成"
+    return "全部完成"
   }
   if (planStore.status === "STOPPED") {
-    return "转码任务已终止"
+    return "已停止"
   }
   if (planStore.status === "FAILED") {
     return "本批次已结束（含失败任务，可查看日志或重试）"
   }
   if (planStore.tasks.length > 0) {
-    return `计划已就绪 · 共 ${planStore.tasks.length} 个任务`
+    return `就绪 · 共 ${planStore.tasks.length} 个任务`
   }
-  return "等待添加媒体文件并生成计划"
+  return "请先添加文件"
 })
 
 const progressPercent = computed(() => {
@@ -93,7 +93,7 @@ function openOutputDir() {
     void window.api.openPath(dir).catch((err: unknown) => {
       logStore.append({
         level: "WARN",
-        message: `打开输出目录失败: ${err instanceof Error ? err.message : String(err)}（${dir}）`,
+        message: `打开输出文件夹失败: ${err instanceof Error ? err.message : String(err)}（${dir}）`,
         timestamp: new Date().toLocaleTimeString(),
       })
     })
@@ -127,15 +127,15 @@ function openOutputDir() {
 
     <div class="exec-stats">
       <div class="stat">
-        <span class="stat-lbl">任务进度</span>
+        <span class="stat-lbl">任务</span>
         <span class="stat-val" data-testid="stat-overall">{{ overallStat }}</span>
       </div>
       <div class="stat">
-        <span class="stat-lbl">实时速度</span>
+        <span class="stat-lbl">速度</span>
         <span class="stat-val" data-testid="stat-speed">{{ speedStat }}</span>
       </div>
       <div class="stat">
-        <span class="stat-lbl">剩余时间</span>
+        <span class="stat-lbl">剩余</span>
         <span class="stat-val" data-testid="stat-eta">{{ etaStat }}</span>
       </div>
     </div>
@@ -145,7 +145,7 @@ function openOutputDir() {
         <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
         </svg>
-        打开输出目录
+        打开输出文件夹
       </button>
     </div>
   </div>

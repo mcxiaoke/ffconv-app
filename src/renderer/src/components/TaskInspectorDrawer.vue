@@ -14,11 +14,25 @@ const copiedCmd = ref(false)
 const copiedRaw = ref(false)
 const showRawMeta = ref(false)
 
+/** 任务状态的中文标签（与 TaskTable 的 STATUS_MAP 同一套用词） */
+const STATUS_TEXT: Record<string, string> = {
+  staged: "待扫描",
+  pending: "等待中",
+  preparing: "准备中",
+  running: "转码中",
+  retrying: "重试中",
+  success: "完成",
+  failed: "失败",
+  skipped: "已跳过",
+  cancelled: "已停止",
+}
+const statusText = computed(() => STATUS_TEXT[task.value?.status || ""] || "等待中")
+
 /**
  * 命令来源：
- *  - "plan"     —— 主进程 createPlan 时生成的真实推演命令（含硬件分层与逐文件参数）；
- *  - "estimate" —— 计划尚未生成时，本组件按预设名与当前微调参数粗略拼接的**估算**命令，
- *                  与真实执行命令无关，必须在 UI 上明确区分（此前统一标为「完整推演」会误导）。
+ *  - "plan"     —— 扫描时由主进程生成的实际命令（含硬件加速与逐文件参数）；
+ *  - "estimate" —— 尚未扫描时，本组件按当前设置拼接的**估算**命令，
+ *                  与实际执行的命令无关，必须在 UI 上明确区分。
  */
 const cmdSource = computed<"plan" | "estimate">(() =>
   plan.planSnapshot?.previewCmd ? "plan" : "estimate"
@@ -222,14 +236,14 @@ function startResizing(e: MouseEvent) {
         class="drawer-resizer"
         :class="{ dragging: isResizing }"
         data-testid="inspector-drawer-resizer"
-        title="拖动调整面板宽度"
+        title="拖动调整宽度"
         @mousedown.stop="startResizing"
       ></div>
 
       <div class="insp-head">
         <div class="insp-title-zone">
           <span class="insp-title" :title="task.name">{{ task.name }}</span>
-          <span class="tag" :class="task.status">{{ task.status }}</span>
+          <span class="tag" :class="task.status">{{ statusText }}</span>
         </div>
         <button class="close-btn" data-testid="btn-close-inspector" title="关闭 (Esc)" @click="close">✕</button>
       </div>
@@ -238,17 +252,17 @@ function startResizing(e: MouseEvent) {
         <!-- 规格对比卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>媒体规格详细解析</span>
+            <span>媒体信息</span>
             <span v-if="task.bitDepth && task.bitDepth > 8" class="tag ok">{{ task.bitDepth }}bit HDR/Wide</span>
-            <span v-else class="tag ok">规格已解析</span>
+            <span v-else class="tag ok">已读取</span>
           </div>
           <div class="insp-grid">
             <div class="insp-kv">
-              <span class="k">源视频编码</span>
+              <span class="k">视频编码</span>
               <span class="v">{{ (task.videoCodec || "未知").toUpperCase() }} {{ task.profile ? `(${task.profile}${task.level ? '@' + task.level : ''})` : '' }}</span>
             </div>
             <div class="insp-kv">
-              <span class="k">目标编码预设</span>
+              <span class="k">输出预设</span>
               <span class="v primary-text">{{ plan.planSnapshot?.presetName || config.preset.toUpperCase() }}</span>
             </div>
             <div class="insp-kv">
@@ -260,19 +274,19 @@ function startResizing(e: MouseEvent) {
               <span class="v">{{ task.fps ? `${task.fps} fps` : '—' }} · {{ task.pixelFormat || '—' }}</span>
             </div>
             <div class="insp-kv">
-              <span class="k">源文件大小 / 时长</span>
+              <span class="k">大小 / 时长</span>
               <span class="v">{{ formatSize(task.size) }} ({{ formatDuration(task.duration) }})</span>
             </div>
             <div class="insp-kv">
-              <span class="k">色彩位深</span>
+              <span class="k">位深</span>
               <span class="v">{{ task.bitDepth ? `${task.bitDepth} bit` : '8 bit' }}</span>
             </div>
             <div class="insp-kv">
-              <span class="k">源音频规格</span>
+              <span class="k">音频</span>
               <span class="v">{{ task.audioCodec ? task.audioCodec.toUpperCase() : '无音频' }} {{ task.audioChannels ? `· ${task.audioChannels}声道` : '' }} {{ task.audioSampleRate ? `· ${task.audioSampleRate}Hz` : '' }}</span>
             </div>
             <div class="insp-kv">
-              <span class="k">目标音频参数</span>
+              <span class="k">输出音频</span>
               <span class="v">{{ config.tune.audioCodec || "aac" }} · {{ config.tune.audioBitrate || "192k" }}</span>
             </div>
           </div>
@@ -281,13 +295,13 @@ function startResizing(e: MouseEvent) {
         <!-- 原始元数据 (纯文本 / JSON) 卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>原始元数据 (ffprobe)</span>
+            <span>原始元数据（ffprobe）</span>
             <div style="display: flex; gap: 6px;">
               <button class="btn btn-sm" data-testid="btn-toggle-raw-meta" @click="showRawMeta = !showRawMeta">
                 {{ showRawMeta ? '收起' : '展开' }}
               </button>
               <button class="btn btn-sm" data-testid="btn-copy-raw-meta" @click="copyRaw">
-                {{ copiedRaw ? '已复制 ✓' : '复制元数据' }}
+                {{ copiedRaw ? '已复制' : '复制' }}
               </button>
             </div>
           </div>
@@ -299,18 +313,17 @@ function startResizing(e: MouseEvent) {
         <!-- FFmpeg 命令行推演卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>FFmpeg 命令行（{{ cmdSource === "plan" ? "计划推演" : "本地估算" }}）</span>
+            <span>FFmpeg 命令{{ cmdSource === "plan" ? "" : "（预览）" }}</span>
             <button class="btn btn-sm" data-testid="btn-copy-cmd" @click="copyCmd">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
               </svg>
-              {{ copiedCmd ? '已复制 ✓' : '复制命令' }}
+              {{ copiedCmd ? '已复制' : '复制' }}
             </button>
           </div>
           <div v-if="cmdSource === 'estimate'" class="cmd-warn" data-testid="cmd-estimate-warn">
-            尚未生成计划：以下命令是按预设名与当前微调参数粗略拼接的估算值，**不代表真实执行命令**。
-            点击「生成计划」后会显示含硬件分层与逐文件参数的真实推演命令。
+            尚未扫描：这里按当前设置估算。点击「扫描」后会显示实际使用的命令。
           </div>
           <div class="cmd-box" data-testid="insp-cmd-box" v-html="highlightedCmd"></div>
         </div>
@@ -318,16 +331,16 @@ function startResizing(e: MouseEvent) {
         <!-- 路径卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>文件路径</span>
-            <button class="btn btn-sm" @click="locateFile">定位源文件</button>
+            <span>路径</span>
+            <button class="btn btn-sm" @click="locateFile">在文件夹中显示</button>
           </div>
           <div class="paths-box">
             <div class="path-item">
-              <span class="path-label">源文件：</span>
+              <span class="path-label">源文件</span>
               <span class="path-val">{{ task.path }}</span>
             </div>
             <div class="path-item">
-              <span class="path-label">输出产物：</span>
+              <span class="path-label">输出文件</span>
               <span class="path-val primary-text">{{ task.fileDst }}</span>
             </div>
           </div>
@@ -575,6 +588,9 @@ function startResizing(e: MouseEvent) {
 
 .path-label {
   color: var(--text-3);
+  /* 标签与长路径之间需要视觉分隔，否则两者会连成一串 */
+  flex: none;
+  margin-right: 8px;
 }
 
 .raw-meta-box {

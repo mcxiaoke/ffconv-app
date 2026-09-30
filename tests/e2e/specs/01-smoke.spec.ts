@@ -10,7 +10,7 @@ test.describe("MediCli Desktop - Smoke & Visual Spec", () => {
 
     const stateTag = appWindow.locator('[data-testid="state-tag"]')
     await expect(stateTag).toBeVisible()
-    await expect(stateTag).toContainText("待机")
+    await expect(stateTag).toContainText("空闲")
 
     // 2. ConfigPanel cards check (4 core cards, advanced options moved to settings)
     const configPanel = appWindow.locator('[data-testid="config-panel"]')
@@ -29,7 +29,7 @@ test.describe("MediCli Desktop - Smoke & Visual Spec", () => {
     // 3. HeroEmpty dropzone check
     const heroEmpty = appWindow.locator('[data-testid="hero-empty"]')
     await expect(heroEmpty).toBeVisible()
-    await expect(heroEmpty).toContainText("拖入媒体文件或目录开始转码")
+    await expect(heroEmpty).toContainText("将文件或文件夹拖到这里")
 
     // 4. ExecutionBoard compact state check
     const execBoard = appWindow.locator('[data-testid="execution-board"]')

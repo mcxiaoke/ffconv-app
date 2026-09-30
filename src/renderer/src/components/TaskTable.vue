@@ -77,22 +77,22 @@ async function pickOutputDir() {
 }
 
 const STATUS_MAP: Record<TaskStatus, { text: string; cls: string }> = {
-  staged: { text: "待规划", cls: "staged" },
-  pending: { text: "待处理", cls: "" },
+  staged: { text: "待扫描", cls: "staged" },
+  pending: { text: "等待中", cls: "" },
   preparing: { text: "准备中", cls: "info" },
   running: { text: "转码中", cls: "info" },
   retrying: { text: "重试中", cls: "warn" },
-  success: { text: "已完成", cls: "ok" },
+  success: { text: "完成", cls: "ok" },
   failed: { text: "失败", cls: "err" },
-  skipped: { text: "跳过", cls: "warn" },
-  cancelled: { text: "已取消", cls: "dis" },
+  skipped: { text: "已跳过", cls: "warn" },
+  cancelled: { text: "已停止", cls: "dis" },
 }
 
 function getStatusInfo(status: TaskStatus) {
   return STATUS_MAP[status] || { text: status, cls: "" }
 }
 
-// 双击行：直接呼出媒体信息与推演命令检查器 (ffprobe)
+// 双击行：打开媒体信息与 FFmpeg 命令面板
 function handleRowDblClick(task: PlanTask, event?: MouseEvent) {
   if (event && (event.target as HTMLElement).closest(".ck, .icon-btn, .t-ops")) return
   window.getSelection()?.removeAllRanges()
@@ -308,7 +308,7 @@ const targetSpecText = computed(() => {
   const w = ts?.width || t.width
   const h = ts?.height || t.height
   const parts: string[] = []
-  parts.push(w && h ? `${w}x${h}` : "保持源分辨率")
+  parts.push(w && h ? `${w}x${h}` : "与源文件相同")
   const fps = ts?.fps || t.fps
   parts.push(fps ? `${fps}fps` : "原帧率")
   return parts.join(" · ")
@@ -341,7 +341,7 @@ const selectedTaskPreview = computed(() => {
     ? dstParts.join(" · ")
     : t.fileDst
       ? `${getBaseName(t.fileDst)} · [${planStore.planSnapshot?.presetName || '预设'}]`
-      : `[待推演] 遵循当前预设及参数微调`
+      : `[未扫描] 使用当前设置`
 
   return { name: t.name, srcText: src, dstText: dst, task: t }
 })
@@ -435,7 +435,7 @@ const selectedTaskPreview = computed(() => {
             </td>
             <td>
               <div v-if="task.fileDst" class="t-main" :title="task.fileDst">{{ getBaseName(task.fileDst) }}</div>
-              <div v-else class="t-main t-staged">[待推演] 遵循左侧预设</div>
+              <div v-else class="t-main t-staged">[未扫描] 使用当前设置</div>
               <div v-if="task.fileDst" class="t-sub" :title="task.fileDst">{{ getDirName(task.fileDst) }}</div>
             </td>
             <td>
@@ -479,7 +479,7 @@ const selectedTaskPreview = computed(() => {
                 </button>
                 <button
                   class="icon-btn"
-                  title="查看源媒体规格与推演命令 (ffprobe)"
+                  title="查看媒体信息与 FFmpeg 命令"
                   data-testid="btn-inspect-task"
                   @click="inspectTask(task, $event)"
                 >
@@ -530,7 +530,7 @@ const selectedTaskPreview = computed(() => {
       </table>
     </div>
 
-    <!-- 列表底部操作与快速对比底板（对标 ShanaEncoder） -->
+    <!-- 列表底部操作与当前任务摘要 -->
     <div class="table-bottom-bar" data-testid="table-bottom-bar">
       <div class="bottom-top-row">
         <div class="tb-actions">
@@ -550,26 +550,26 @@ const selectedTaskPreview = computed(() => {
             class="btn btn-sm btn-secondary"
             data-testid="btn-remove-selected"
             :disabled="planStore.selectedIds.size === 0 || isPlanBusy()"
-            title="从列表中移除当前所有已勾选项"
+            title="从列表中删除勾选的任务"
             @click="removeSelectedTasks"
           >
             <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
-            <span>移除所选 ({{ planStore.selectedIds.size }})</span>
+            <span>删除所选 ({{ planStore.selectedIds.size }})</span>
           </button>
         </div>
 
-        <!-- 选中任务单行紧凑差异摘要（默认态） -->
+        <!-- 当前任务摘要（默认态） -->
         <div v-if="selectedTaskPreview && !isDetailExpanded" class="tb-preview" data-testid="task-quick-preview">
           <div class="pv-col pv-src" :title="selectedTaskPreview.name">
-            <span class="pv-label">源媒体:</span>
+            <span class="pv-label">源文件:</span>
             <span class="pv-val">{{ selectedTaskPreview.srcText }}</span>
           </div>
           <div class="pv-sep">→</div>
           <div class="pv-col pv-dst">
-            <span class="pv-label">推演目标:</span>
+            <span class="pv-label">输出:</span>
             <span class="pv-val">{{ selectedTaskPreview.dstText }}</span>
           </div>
           <button
@@ -582,7 +582,7 @@ const selectedTaskPreview = computed(() => {
           </button>
         </div>
         <div v-else-if="!selectedTaskPreview" class="tb-summary">
-          共 {{ planStore.tasks.length }} 个视频文件 · 总计 {{ formatSize(planStore.totalSize) }} · 时长 {{ formatDuration(planStore.totalDuration) }}
+          共 {{ planStore.tasks.length }} 个文件 · 总计 {{ formatSize(planStore.totalSize) }} · 时长 {{ formatDuration(planStore.totalDuration) }}
         </div>
       </div>
 
@@ -600,25 +600,25 @@ const selectedTaskPreview = computed(() => {
         </div>
         <div class="card-grid">
           <div class="card-col card-src">
-            <div class="col-title">【输入源媒体】</div>
-            <div class="card-item"><span>规格：</span><b>{{ sourceSpecText }}</b></div>
+            <div class="col-title">源文件</div>
+            <div class="card-item"><span>分辨率：</span><b>{{ sourceSpecText }}</b></div>
             <div class="card-item"><span>编码：</span><b>{{ selectedTaskPreview.task.videoCodec || '未知' }} / {{ selectedTaskPreview.task.audioCodec || '未知' }}</b></div>
             <div class="card-item"><span>大小：</span><b>{{ formatSize(selectedTaskPreview.task.size) }} ({{ formatDuration(selectedTaskPreview.task.duration) }})</b></div>
             <div class="card-item truncate" :title="selectedTaskPreview.task.path"><span>路径：</span>{{ selectedTaskPreview.task.path }}</div>
           </div>
           <div class="card-col card-dst">
-            <div class="col-title">【目标转码配置】</div>
-            <div class="card-item"><span>目标规格：</span><b>{{ targetSpecText }}</b></div>
-            <div class="card-item"><span>目标编码：</span><b>{{ selectedTaskPreview.task.targetSummary?.videoEncoder || '自动编码' }} · {{ selectedTaskPreview.task.targetSummary?.audioCodec || 'aac' }}</b></div>
-            <div class="card-item"><span>质量策略：</span><b>{{ selectedTaskPreview.task.targetSummary?.quality ? 'CRF ' + selectedTaskPreview.task.targetSummary.quality : selectedTaskPreview.task.targetSummary?.bitrate ? Math.round(selectedTaskPreview.task.targetSummary.bitrate / 1000) + 'k' : '自适应' }}</b></div>
-            <div class="card-item truncate" :title="selectedTaskPreview.task.fileDst || '同源文件目录'"><span>输出路径：</span>{{ selectedTaskPreview.task.fileDst || (configStore.outputBesideSource ? '自动保存在源文件同级' : configStore.outputDir || '源文件同级') }}</div>
+            <div class="col-title">输出设置</div>
+            <div class="card-item"><span>输出分辨率：</span><b>{{ targetSpecText }}</b></div>
+            <div class="card-item"><span>输出编码：</span><b>{{ selectedTaskPreview.task.targetSummary?.videoEncoder || '自动编码' }} · {{ selectedTaskPreview.task.targetSummary?.audioCodec || 'aac' }}</b></div>
+            <div class="card-item"><span>质量：</span><b>{{ selectedTaskPreview.task.targetSummary?.quality ? 'CRF ' + selectedTaskPreview.task.targetSummary.quality : selectedTaskPreview.task.targetSummary?.bitrate ? Math.round(selectedTaskPreview.task.targetSummary.bitrate / 1000) + 'k' : '自动' }}</b></div>
+            <div class="card-item truncate" :title="selectedTaskPreview.task.fileDst || '同源文件目录'"><span>输出路径：</span>{{ selectedTaskPreview.task.fileDst || (configStore.outputBesideSource ? '与源文件同级' : configStore.outputDir || '与源文件同级') }}</div>
           </div>
         </div>
       </div>
 
       <!-- 常驻输出路径条 (对标 Shana/HandBrake) -->
       <div class="output-dest-bar" data-testid="output-dest-bar">
-        <label class="dest-ck-label" title="转码产物与源文件保存在相同文件夹">
+        <label class="dest-ck-label" title="输出到每个源文件所在的文件夹">
           <input
             type="checkbox"
             class="dest-ck"
@@ -626,7 +626,7 @@ const selectedTaskPreview = computed(() => {
             :checked="configStore.outputBesideSource"
             @change="configStore.setOutputBesideSource(($event.target as HTMLInputElement).checked)"
           />
-          <span>保存在源文件夹同级</span>
+          <span>与源文件同级</span>
         </label>
         <div v-if="!configStore.outputBesideSource" class="custom-dest-box">
           <input
@@ -641,7 +641,7 @@ const selectedTaskPreview = computed(() => {
           <button class="btn btn-sm btn-secondary" data-testid="btn-browse-dest" @click="pickOutputDir">更改…</button>
         </div>
         <span v-if="hasMultipleSourceDirs && configStore.outputBesideSource" class="multi-dir-hint">
-          （产物将分别保存在各自源文件目录下）
+          （每个文件输出到各自的源文件夹）
         </span>
       </div>
     </div>

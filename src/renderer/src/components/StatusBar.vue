@@ -9,31 +9,31 @@ const plan = usePlanStore()
 const logStore = useLogStore()
 
 const ffmpegStatusText = computed(() => {
-  if (env.summary?.ffmpegPath) return "ffmpeg: 就绪"
-  return "ffmpeg: 未检测到"
+  if (env.summary?.ffmpegPath) return "ffmpeg: 可用"
+  return "ffmpeg: 未找到"
 })
 
 const ffprobeStatusText = computed(() => {
-  if (env.summary?.ffprobePath) return "ffprobe: 就绪"
-  return "ffprobe: 未检测到"
+  if (env.summary?.ffprobePath) return "ffprobe: 可用"
+  return "ffprobe: 未找到"
 })
 
 const hwTierText = computed(() => {
   const tier = env.summary?.hardware.tier || "cpu"
-  return `加速: ${tier.toUpperCase()}`
+  return `硬件加速: ${tier.toUpperCase()}`
 })
 
 const taskSummary = computed(() => {
   if (plan.status === "RUNNING") {
-    return `转码中 · 总体进度 ${Math.round(plan.overallPercent)}%`
+    return `转码中 · 进度 ${Math.round(plan.overallPercent)}%`
   }
   if (plan.status === "PLANNING") {
-    return "正在分析媒体并规划转码命令行…"
+    return "正在扫描…"
   }
   if (plan.tasks.length === 0) {
-    return "就绪 · 待添加任务"
+    return "就绪 · 请添加文件"
   }
-  return `就绪 · ${plan.tasks.length} 个任务待处理`
+  return `就绪 · ${plan.tasks.length} 个任务`
 })
 
 const emit = defineEmits<{
@@ -54,7 +54,7 @@ const emit = defineEmits<{
         <span>{{ ffprobeStatusText }}</span>
       </div>
       <div class="status-sep"></div>
-      <div class="status-item" :title="'硬件加速分层: ' + (env.summary?.hardware.tier || 'cpu')">
+      <div class="status-item" :title="'硬件加速: ' + (env.summary?.hardware.tier || 'cpu')">
         <span class="status-dot ok"></span>
         <span>{{ hwTierText }}</span>
       </div>
@@ -71,17 +71,17 @@ const emit = defineEmits<{
         title="查看系统硬件、GPU 及核心环境信息"
         @click="emit('open-about')"
       >
-        <span>系统信息</span>
+        <span>关于</span>
       </button>
       <div class="status-sep"></div>
       <button
         class="status-btn"
         data-testid="status-log-btn"
-        title="打开运行日志抽屉 (Ctrl+L)"
+        title="日志 (Ctrl+L)"
         @click="logStore.drawerOpen = !logStore.drawerOpen"
       >
         <span class="status-dot" :class="{ err: logStore.errCount > 0, ok: logStore.errCount === 0 }"></span>
-        <span>日志 {{ logStore.errCount > 0 ? `(${logStore.errCount} 异常)` : '' }}</span>
+        <span>日志{{ logStore.errCount > 0 ? ` (${logStore.errCount} 条错误)` : '' }}</span>
       </button>
     </div>
   </footer>
