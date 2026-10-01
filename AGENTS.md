@@ -56,6 +56,10 @@ npm run package:win  # build + electron-builder（nsis/portable/zip）→ releas
 ## 测试
 
 - 测试为 Playwright e2e（`tests/e2e/`），先 `npm run build` 再 `npm run test:e2e`。
+- 每个用例经 `tests/e2e/fixtures.ts` 用**独立 `--user-data-dir`** 启动，避免
+  `userData/settings.json` 里的持久化设置跨用例污染。
+- 跑 e2e 前须先关掉正在运行的实例：`requestSingleInstanceLock()` 失败会让新实例立刻
+  退出（表现为 “Error launching app / Process failed to launch”）。
 - e2e 素材为本地不入库的 `data/videos/TEST2__h264_60fps_1080.mp4` 与
   `TEST2__hevc_60fps_1080.mp4`；素材缺失时相关用例会失败，新跑环境需先补素材。
 - `data/`、`out/`、`release/`、`temp/`、`test-results/` 均不入库。
@@ -81,6 +85,17 @@ npm run package:win  # build + electron-builder（nsis/portable/zip）→ releas
 2. 若新增 facade 导出，更新 `core/transcode/index.js` 与主进程调用点
 3. 在 `presets/default.yaml` 暴露对应预设字段，并在 `docs/ffmpeg/FFMPEG-USAGE.md` 补文档
 4. 用 `npm run dev` 手工验证 + e2e 回归
+
+### 新增可持久化设置
+
+渲染层设置（预设/调参/高级选项/输出）经 IPC 落 `userData/settings.json`：
+
+1. 在 `src/shared/contracts.ts` 的 `AppSettings` 增字段；
+2. 同步 `src/main/settings-store.ts` 的 `sanitizeSettings` 白名单与收窄规则 ——
+   主进程侧校验是唯一安全门，渲染层传什么都不可信，未知字段一律丢弃；
+3. 在 `src/renderer/src/stores/config.ts` 的 `snapshotForPersist`/`applySettings` 补映射。
+
+高危开关（如「转码后删除源文件」）**不得**进入持久化形状，避免跨会话自动继承。
 
 ### 添加依赖
 

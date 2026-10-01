@@ -26,6 +26,15 @@
   --error: #cf222e;
   --error-soft: #ffebe9;
   --shadow: 0 1px 3px rgba(31, 35, 40, 0.12), 0 1px 2px rgba(31, 35, 40, 0.08);
+  /* 日志面板配色：此前固定深色，浅色主题下与整体割裂 */
+  --log-bg: #ffffff;
+  --log-text: #1f2328;
+  --log-ts: #656d76;
+  --log-debug: #6e7781;
+  --log-info: #1f2328;
+  --log-cmd: #116329;
+  --log-warn: #9a6700;
+  --log-error: #cf222e;
   --radius: 5px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif;
   --mono: "Cascadia Mono", Consolas, "SF Mono", Menlo, "Courier New", monospace;
@@ -57,6 +66,30 @@
   --error: #f85149;
   --error-soft: rgba(248, 81, 73, 0.18);
   --shadow: 0 3px 12px rgba(1, 4, 9, 0.5), 0 1px 3px rgba(1, 4, 9, 0.4);
+  --log-bg: #0d1117;
+  --log-text: #e6edf3;
+  --log-ts: #7d8590;
+  --log-debug: #8b949e;
+  --log-info: #e6edf3;
+  --log-cmd: #7ee787;
+  --log-warn: #e3b341;
+  --log-error: #f85149;
+}
+
+/*
+ * 系统开启「减少动态效果」时停止一切装饰性动画/过渡。
+ * 用近 0 而非 0 是为保留 transitionend/animationend 事件语义，
+ * 避免依赖这些事件回落的逻辑被卡住。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }

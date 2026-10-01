@@ -8,17 +8,20 @@ const env = useEnvStore()
 const plan = usePlanStore()
 const logStore = useLogStore()
 
+// 二进制定位来自轻量目录，启动即可用；硬件分层要等探测完成，未完成时显示「探测中」，
+// 而不是先误报「未找到 / CPU」再跳变。
 const ffmpegStatusText = computed(() => {
-  if (env.summary?.ffmpegPath) return "ffmpeg: 可用"
-  return "ffmpeg: 未找到"
+  if (env.ffmpegPath) return "ffmpeg: 可用"
+  return env.catalog ? "ffmpeg: 未找到" : "ffmpeg: 检测中…"
 })
 
 const ffprobeStatusText = computed(() => {
-  if (env.summary?.ffprobePath) return "ffprobe: 可用"
-  return "ffprobe: 未找到"
+  if (env.ffprobePath) return "ffprobe: 可用"
+  return env.catalog ? "ffprobe: 未找到" : "ffprobe: 检测中…"
 })
 
 const hwTierText = computed(() => {
+  if (!env.hardwareReady) return "硬件加速: 探测中…"
   const tier = env.summary?.hardware.tier || "cpu"
   return `硬件加速: ${tier.toUpperCase()}`
 })
@@ -44,18 +47,18 @@ const emit = defineEmits<{
 <template>
   <footer class="status-bar" data-testid="status-bar">
     <div class="status-left">
-      <div class="status-item" :title="env.summary?.ffmpegPath || '未配置'">
-        <span class="status-dot" :class="{ ok: !!env.summary?.ffmpegPath }"></span>
+      <div class="status-item" :title="env.ffmpegPath || '未配置'">
+        <span class="status-dot" :class="{ ok: !!env.ffmpegPath }"></span>
         <span>{{ ffmpegStatusText }}</span>
       </div>
       <div class="status-sep"></div>
-      <div class="status-item" :title="env.summary?.ffprobePath || '未配置'">
-        <span class="status-dot" :class="{ ok: !!env.summary?.ffprobePath }"></span>
+      <div class="status-item" :title="env.ffprobePath || '未配置'">
+        <span class="status-dot" :class="{ ok: !!env.ffprobePath }"></span>
         <span>{{ ffprobeStatusText }}</span>
       </div>
       <div class="status-sep"></div>
       <div class="status-item" :title="'硬件加速: ' + (env.summary?.hardware.tier || 'cpu')">
-        <span class="status-dot ok"></span>
+        <span class="status-dot" :class="{ ok: env.hardwareReady }"></span>
         <span>{{ hwTierText }}</span>
       </div>
     </div>

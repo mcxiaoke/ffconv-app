@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url"
 import { transcodeService } from "./ffmpeg-service.js"
 import { toSerializable } from "./ipc-serializer.js"
 import { openPath, showItemInFolder, showNotification, writeClipboardText } from "./native.js"
+import { SettingsStore } from "./settings-store.js"
 import { IPC_CHANNELS, MENU_ACTIONS, MENU_ACTION_CHANNEL } from "../shared/ipc-channels.js"
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
@@ -25,6 +26,18 @@ if (process.platform === "win32") {
 
 function summaryFfmpegPath() {
   return transcodeService.getFfmpegPath()
+}
+
+/**
+ * 设置存储延迟到首次使用时构造：`app.getPath("userData")` 在 ready 之前
+ * 不保证反映最终的应用名，延迟构造可避免把设置写到错误的目录。
+ */
+let settingsStore: SettingsStore | null = null
+function getSettingsStore(): SettingsStore {
+  if (!settingsStore) {
+    settingsStore = new SettingsStore(path.join(app.getPath("userData"), "settings.json"))
+  }
+  return settingsStore
 }
 
 /** 菜单动作统一出口：字串取自共享常量，避免与渲染进程拼写漂移 */
@@ -399,6 +412,8 @@ transcodeService.setDeleteSourceConfirmer(async () => {
 
 handleTrusted(IPC_CHANNELS.APP_GET_VERSION, () => app.getVersion())
 handleTrusted(IPC_CHANNELS.ENV_GET, () => transcodeService.getSummary())
+// 轻量通道：启动时先拿预设，不阻塞在硬件探测上（详见 FfmpegEnvironment.getPresetCatalog）
+handleTrusted(IPC_CHANNELS.ENV_GET_PRESETS, () => transcodeService.getPresetCatalog())
 handleTrusted(IPC_CHANNELS.ENV_SET_CUSTOM_PATHS, async (payload: unknown) => {
   if (!payload || typeof payload !== "object") throw new Error("Invalid tool paths payload")
   return transcodeService.setCustomToolPaths(payload as {
@@ -406,6 +421,14 @@ handleTrusted(IPC_CHANNELS.ENV_SET_CUSTOM_PATHS, async (payload: unknown) => {
     ffprobe?: string
     mediainfo?: string
   })
+})
+handleTrusted(IPC_CHANNELS.SETTINGS_GET, () => getSettingsStore().load())
+handleTrusted(IPC_CHANNELS.SETTINGS_SET, (payload: unknown) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("settings payload must be a plain object")
+  }
+  // 白名单校验与原子写都在 SettingsStore 内完成，渲染层传什么都无法写出未知字段
+  return getSettingsStore().save(payload)
 })
 handleTrusted(IPC_CHANNELS.STAGE_INPUTS, async (paths: unknown) => {
   if (!Array.isArray(paths)) throw new Error("paths must be an array of strings")

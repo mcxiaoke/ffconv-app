@@ -309,11 +309,12 @@ async function handleDrop(event: DragEvent) {
 
 // Preset grouping & selection
 const selectedPresetObj = computed(() => {
-  return env.summary?.presets.find((p) => p.name === config.preset) || null
+  // 走 env.presets（轻量目录优先）：硬件探测未完成时也能渲染预设
+  return env.presets.find((p) => p.name === config.preset) || null
 })
 
 const presetGroups = computed(() => {
-  const list = env.summary?.presets || []
+  const list = env.presets
   const groups: Record<string, typeof list> = {}
   for (const p of list) {
     const key = (p.type === "audio" ? "音频预设" : p.videoCodecFamily?.toUpperCase() || "通用视频")
@@ -398,7 +399,19 @@ const audioSummary = computed(() => {
     <section class="card" data-testid="card-input-output">
       <div class="card-title">
         <span>文件与输出</span>
-        <span class="sub">输入 / 输出位置 / 命名</span>
+        <div class="title-right">
+          <span class="sub">输入 / 输出位置 / 命名</span>
+          <!-- 与视频/音频卡一致：仅在有脏值时出现；这里恢复的是默认值而非预设值 -->
+          <a
+            v-if="config.outputDirtyCount > 0"
+            class="reset-link"
+            data-testid="btn-reset-output"
+            title="恢复默认值（输出位置 / 目录结构 / 前缀 / 后缀）"
+            @click="config.resetOutputSettings()"
+          >
+            重置 ({{ config.outputDirtyCount }})
+          </a>
+        </div>
       </div>
       <div class="card-body">
         <div

@@ -1,5 +1,6 @@
 import { defineStore } from "pinia"
-import { ref, computed } from "vue"
+import { ref, computed, watch, nextTick } from "vue"
+import type { AppSettings } from "../../../shared/contracts"
 
 export interface TuneConfig {
   dimension: number
@@ -132,6 +133,39 @@ export const useConfigStore = defineStore("config", () => {
     tune.value.audioBitrate = ""
   }
 
+  // ===== 「文件与输出」的脏值与重置 =====
+  // 视频/音频有「恢复预设值」可依，这一组没有预设参与，对应的基准是默认值：
+  // 输出到源文件同级、保留上级文件夹名、无前后缀。
+
+  const isOutputDirDirty = computed(() => outputDir.value !== "" || !outputBesideSource.value)
+  const isOutputModeDirty = computed(() => outputMode.value !== "dir")
+  const isPrefixDirty = computed(() => prefix.value !== "")
+  const isSuffixDirty = computed(() => suffix.value !== "")
+
+  const outputDirtyCount = computed(
+    () =>
+      (isOutputDirDirty.value ? 1 : 0) +
+      (isOutputModeDirty.value ? 1 : 0) +
+      (isPrefixDirty.value ? 1 : 0) +
+      (isSuffixDirty.value ? 1 : 0),
+  )
+
+  /**
+   * 恢复「文件与输出」的默认值。
+   *
+   * 刻意不动的两项：
+   * - `inputs`：那是用户挑的素材，不是参数；清空属于误操作成本极高的一类。
+   * - `savedCustomOutputDir`：它是「上次用过的自定义目录」的记忆，
+   *   保留它，用户取消勾选「与源文件同级」时还能拿回来。
+   */
+  function resetOutputSettings() {
+    outputDir.value = ""
+    outputBesideSource.value = true
+    outputMode.value = "dir"
+    prefix.value = ""
+    suffix.value = ""
+  }
+
   function addInputs(paths: string[]) {
     const set = new Set([...inputs.value, ...paths.filter(Boolean)])
     inputs.value = Array.from(set)
@@ -151,7 +185,87 @@ export const useConfigStore = defineStore("config", () => {
     inputs.value = []
   }
 
+  // ===== 设置持久化 =====
+  // 用户配置（预设/调参/高级选项/输出）此前只活在内存，每次启动复位。
+  // 现在经 IPC 落 userData/settings.json，启动时水合恢复。
+
+  /** 水合完成前不得回写，否则会用默认值覆盖磁盘 */
+  const hydrated = ref(false)
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 可持久化子集；刻意剔除 deleteSource（高危开关不跨会话继承） */
+  function snapshotForPersist(): AppSettings {
+    return {
+      preset: preset.value,
+      outputDir: outputDir.value,
+      outputBesideSource: outputBesideSource.value,
+      savedCustomOutputDir: savedCustomOutputDir.value,
+      outputMode: outputMode.value,
+      prefix: prefix.value,
+      suffix: suffix.value,
+      tune: { ...tune.value },
+      adv: {
+        hwaccel: adv.value.hwaccel,
+        decodeMode: adv.value.decodeMode,
+        jobs: adv.value.jobs,
+        override: adv.value.override,
+        anime: adv.value.anime,
+        strict: adv.value.strict,
+      },
+    }
+  }
+
+  function applySettings(s: AppSettings) {
+    preset.value = s.preset || preset.value
+    outputMode.value = s.outputMode
+    prefix.value = s.prefix
+    suffix.value = s.suffix
+    tune.value = { ...tune.value, ...s.tune }
+    // adv 展开不含 deleteSource，故该字段保持当前（默认 false）不受恢复影响
+    adv.value = { ...adv.value, ...s.adv }
+    outputDir.value = s.outputDir
+    savedCustomOutputDir.value = s.savedCustomOutputDir || s.outputDir
+    outputBesideSource.value = s.outputBesideSource
+  }
+
+  /** 启动时恢复磁盘设置；waiting nextTick 是为了让本次赋值触发的 watcher 先跑完，
+   *  避免水合产生的变更被当成用户操作回写一遍。 */
+  async function hydrate(): Promise<void> {
+    if (hydrated.value) return
+    try {
+      const saved = await window.api?.getSettings?.()
+      if (saved) applySettings(saved)
+    } catch (err) {
+      console.error("Failed to load persisted settings:", err)
+    }
+    await nextTick()
+    hydrated.value = true
+  }
+
+  function schedulePersist() {
+    if (!hydrated.value) return
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = null
+      const pending = window.api?.saveSettings?.(snapshotForPersist())
+      if (pending) {
+        void pending.catch((err: unknown) => {
+          console.error("Failed to persist settings:", err)
+        })
+      }
+    }, 400)
+  }
+
+  watch(
+    [preset, outputDir, outputBesideSource, savedCustomOutputDir, outputMode, prefix, suffix, tune, adv],
+    schedulePersist,
+    { deep: true }
+  )
+
   return {
+    hydrated,
+    hydrate,
+    snapshotForPersist,
     inputs,
     outputDir,
     outputBesideSource,
@@ -177,6 +291,12 @@ export const useConfigStore = defineStore("config", () => {
     resetParam,
     resetVideoTune,
     resetAudioTune,
+    isOutputDirDirty,
+    isOutputModeDirty,
+    isPrefixDirty,
+    isSuffixDirty,
+    outputDirtyCount,
+    resetOutputSettings,
     addInputs,
     removeInput,
     removeInputs,

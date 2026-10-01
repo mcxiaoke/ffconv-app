@@ -25,6 +25,7 @@ export type MenuAction = (typeof MENU_ACTIONS)[keyof typeof MENU_ACTIONS]
 export const IPC_CHANNELS = {
   APP_GET_VERSION: "app:get-version",
   ENV_GET: "env:get",
+  ENV_GET_PRESETS: "env:get-presets",
   DIALOG_SELECT_FILES: "dialog:select-files",
   STAGE_INPUTS: "ffmpeg:stage-inputs",
   STAGE_CLEAR: "ffmpeg:stage-clear",
@@ -39,6 +40,8 @@ export const IPC_CHANNELS = {
   SYSTEM_NOTIFY: "system:notify",
   SYSTEM_COPY_TEXT: "system:copy-text",
   ENV_SET_CUSTOM_PATHS: "env:set-custom-paths",
+  SETTINGS_GET: "settings:get",
+  SETTINGS_SET: "settings:set",
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

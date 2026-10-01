@@ -33,8 +33,17 @@ const api: DesktopApi = {
   getEnvironment() {
     return ipcRenderer.invoke(IPC_CHANNELS.ENV_GET)
   },
+  getPresetCatalog() {
+    return ipcRenderer.invoke(IPC_CHANNELS.ENV_GET_PRESETS)
+  },
   setCustomToolPaths(paths) {
     return ipcRenderer.invoke(IPC_CHANNELS.ENV_SET_CUSTOM_PATHS, safeClone(paths))
+  },
+  getSettings() {
+    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET)
+  },
+  saveSettings(settings) {
+    return ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, safeClone(settings))
   },
   createPlan(body) {
     return ipcRenderer.invoke(IPC_CHANNELS.PLAN_CREATE, safeClone(body))

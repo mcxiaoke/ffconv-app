@@ -59,6 +59,18 @@ export interface EnvironmentSummary {
   }
 }
 
+/**
+ * 轻量预设目录：只含二进制定位与分层预设，**不含**硬件能力探测。
+ *
+ * 用于启动时先让左侧面板可用：硬件探测要跑 `ffmpeg -version`、枚举数百个编码器、
+ * 再按 GPU 矩阵逐项探测（可达 30+ 次 ffmpeg 调用，1~2s），而预设下拉只依赖 YAML。
+ */
+export interface PresetCatalog {
+  ffmpegPath: string | null
+  ffprobePath: string | null
+  presets: EnvironmentSummary["presets"]
+}
+
 export interface MediaInfoPayload {
   provider?: string
   format?: string
@@ -207,6 +219,45 @@ export interface CustomToolPaths {
   mediainfo?: string
 }
 
+/** 转码调参的持久化形状（与 renderer 的 TuneConfig 字段一一对应） */
+export interface PersistedTune {
+  dimension: number
+  quality: number
+  bitrate: string
+  fps: number
+  speed: number
+  audioCodec: string
+  audioBitrate: string
+}
+
+/**
+ * 高级选项的持久化形状。
+ *
+ * 刻意**不含 deleteSource**：「转码后删除源文件」是高危开关，
+ * 绝不能跨会话自动继承——每次启动都必须是显式关闭状态。
+ */
+export interface PersistedAdv {
+  hwaccel: string
+  decodeMode: string
+  jobs: number
+  override: boolean
+  anime: boolean
+  strict: boolean
+}
+
+/** 可在重启后恢复的用户设置（存 userData/settings.json） */
+export interface AppSettings {
+  preset: string
+  outputDir: string
+  outputBesideSource: boolean
+  savedCustomOutputDir: string
+  outputMode: "tree" | "dir" | "file"
+  prefix: string
+  suffix: string
+  tune: PersistedTune
+  adv: PersistedAdv
+}
+
 export interface ExecutionOptions {
   dryRun?: boolean
 }
@@ -227,7 +278,11 @@ export interface DesktopApi {
   removeStagedInputs(paths: string[]): Promise<{ removed: number; totalCount: number }>
   getAppVersion(): Promise<string>
   getEnvironment(): Promise<EnvironmentSummary>
+  /** 轻量预设目录（不含硬件探测），启动时优先调用 */
+  getPresetCatalog(): Promise<PresetCatalog>
   setCustomToolPaths(paths: CustomToolPaths): Promise<EnvironmentSummary>
+  getSettings(): Promise<AppSettings | null>
+  saveSettings(settings: AppSettings): Promise<AppSettings>
   createPlan(body: Record<string, unknown>): Promise<PublicPlanSnapshot>
   startExecution(taskIds?: string[], options?: ExecutionOptions): Promise<{ runId: string }>
   stopExecution(): Promise<{ ok: boolean; message?: string }>

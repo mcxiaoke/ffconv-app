@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref, computed } from "vue"
 import { useEnvStore } from "../stores/env"
+import { useFocusTrap } from "../composables/useFocusTrap"
 
-defineProps<{
+const props = defineProps<{
   show: boolean
 }>()
 
@@ -12,6 +13,10 @@ const emit = defineEmits<{
 
 const envStore = useEnvStore()
 const isRechecking = ref(false)
+
+// 模态焦点陷阱：与 SettingsModal 同一套行为
+const modalRef = ref<HTMLElement | null>(null)
+useFocusTrap(modalRef, computed(() => props.show))
 
 async function recheckEnvironment() {
   isRechecking.value = true
@@ -34,7 +39,15 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
 
 <template>
   <div v-if="show" class="modal-mask" data-testid="about-modal-mask" @click.self="emit('close')">
-    <div class="modal" data-testid="about-modal">
+    <div
+      ref="modalRef"
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="关于"
+      tabindex="-1"
+      data-testid="about-modal"
+    >
       <div class="modal-head">
         <div class="title-with-badge">
           <h3>关于</h3>

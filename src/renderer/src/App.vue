@@ -11,6 +11,7 @@ import TaskInspectorDrawer from "./components/TaskInspectorDrawer.vue"
 import LogDrawer from "./components/LogDrawer.vue"
 import SettingsModal from "./components/SettingsModal.vue"
 import AboutModal from "./components/AboutModal.vue"
+import ToastHost from "./components/ToastHost.vue"
 
 import { useEnvStore } from "./stores/env"
 import { useConfigStore } from "./stores/config"
@@ -18,6 +19,7 @@ import { usePlanStore } from "./stores/plan"
 import { useLogStore } from "./stores/log"
 import { formatSize, formatDuration } from "./utils/format"
 import { useInputIngest } from "./composables/useInputIngest"
+import { useToast } from "./composables/useToast"
 import { MENU_ACTIONS } from "../../shared/ipc-channels"
 import type { EngineEvent } from "../../shared/contracts"
 
@@ -26,6 +28,7 @@ const configStore = useConfigStore()
 const planStore = usePlanStore()
 const logStore = useLogStore()
 const { ingestPaths, isIngesting } = useInputIngest()
+const toast = useToast()
 
 // Sidebar resizer & collapse state
 const sidebarWidth = ref(380)
@@ -229,7 +232,7 @@ async function createPlanInternal() {
 async function createPlan() {
   if (isBusy()) return
   if (configStore.inputs.length === 0) {
-    alert("请先添加至少一个媒体文件或目录")
+    toast.push("请先添加至少一个媒体文件或目录", "warn")
     return
   }
   const knownPreviousPaths = new Set(planStore.tasks.map((t) => t.path))
@@ -254,7 +257,7 @@ async function createPlan() {
       return
     }
     planStore.status = "FAILED"
-    alert(`扫描失败：${msg}`)
+    toast.push(`扫描失败：${msg}`, "error")
     logStore.append({
       level: "ERROR",
       message: `扫描失败：${msg}`,
@@ -549,13 +552,20 @@ onMounted(async () => {
     }
   }
 
-  // Initialize environment & version
-  await envStore.fetchEnv()
-  if (envStore.summary?.presets && envStore.summary.presets.length > 0) {
-    if (!envStore.summary.presets.some((p) => p.name === configStore.preset)) {
-      configStore.preset = envStore.summary.presets[0].name
+  // 恢复持久化设置（预设/调参/高级选项/输出），必须在 fetchEnv 之前：
+  // 下面的「预设是否仍然存在」校验要以已恢复的预设为基准
+  await configStore.hydrate()
+
+  // 先拿轻量预设目录：左侧面板（预设 / 视频 / 音频）立刻可用，
+  // 不必等硬件探测（ffmpeg -version + 枚举编码器 + GPU 逐项探测，实测 1~2s）。
+  await envStore.fetchPresets()
+  if (envStore.presets.length > 0) {
+    if (!envStore.presets.some((p) => p.name === configStore.preset)) {
+      configStore.preset = envStore.presets[0].name
     }
   }
+  // 硬件/系统信息后台补齐：状态栏与「关于」响应式填充，启动流程不等它
+  void envStore.fetchEnv()
 
   // 恢复可能正在运行的执行状态 (A9)
   if (window.api?.getExecutionStatus) {
@@ -720,6 +730,9 @@ onUnmounted(() => {
       :show="showAbout"
       @close="showAbout = false"
     />
+
+    <!-- 应用内操作提示（取代原生 alert） -->
+    <ToastHost />
   </div>
 </template>
 

@@ -92,6 +92,108 @@ function getStatusInfo(status: TaskStatus) {
   return STATUS_MAP[status] || { text: status, cls: "" }
 }
 
+// ============ 搜索 / 状态筛选 / 排序 ============
+// 仅影响**展示**：不改变 selectedIds / activeTaskId / 执行顺序。
+
+const query = ref("")
+const statusFilter = ref<string>("all")
+const sortKey = ref<"index" | "size" | "duration">("index")
+const sortDir = ref<"asc" | "desc">("asc")
+
+/** 状态筛选项：等待中合并 staged/pending/preparing/retrying，与表格措辞一致 */
+const STATUS_FILTERS: Array<{ value: string; label: string; match: (s: TaskStatus) => boolean }> = [
+  { value: "all", label: "全部状态", match: () => true },
+  {
+    value: "pending",
+    label: "等待中",
+    match: (s) => s === "staged" || s === "pending" || s === "preparing" || s === "retrying",
+  },
+  { value: "running", label: "转码中", match: (s) => s === "running" },
+  { value: "success", label: "完成", match: (s) => s === "success" },
+  { value: "failed", label: "失败", match: (s) => s === "failed" },
+  { value: "skipped", label: "已跳过", match: (s) => s === "skipped" },
+  { value: "cancelled", label: "已停止", match: (s) => s === "cancelled" },
+]
+
+const isFiltering = computed(
+  () => query.value.trim() !== "" || statusFilter.value !== "all",
+)
+
+function clearFilters() {
+  query.value = ""
+  statusFilter.value = "all"
+}
+
+/** 展示用任务列表：先筛选再排序；排序同值时按原计划序号，避免抖动 */
+const visibleTasks = computed<PlanTask[]>(() => {
+  const q = query.value.trim().toLowerCase()
+  const filter = STATUS_FILTERS.find((f) => f.value === statusFilter.value) ?? STATUS_FILTERS[0]
+  const filtered = planStore.tasks.filter((t) => {
+    if (!filter.match(t.status)) return false
+    if (!q) return true
+    return (
+      t.name.toLowerCase().includes(q) ||
+      t.path.toLowerCase().includes(q) ||
+      (t.fileDst || "").toLowerCase().includes(q)
+    )
+  })
+  if (sortKey.value === "index") return filtered
+  const key = sortKey.value
+  const dir = sortDir.value === "asc" ? 1 : -1
+  return [...filtered].sort((a, b) => {
+    const av = key === "size" ? a.size : a.duration
+    const bv = key === "size" ? b.size : b.duration
+    if (av === bv) return a.index - b.index
+    return (av - bv) * dir
+  })
+})
+
+function toggleSort(key: "size" | "duration") {
+  if (sortKey.value === key) {
+    sortDir.value = sortDir.value === "asc" ? "desc" : "asc"
+  } else {
+    sortKey.value = key
+    // 大小/时长默认降序：用户多半是想先看最大的/最长的
+    sortDir.value = "desc"
+  }
+}
+
+function ariaSortFor(key: "index" | "size" | "duration"): "ascending" | "descending" | "none" {
+  if (sortKey.value !== key) return "none"
+  return sortDir.value === "asc" ? "ascending" : "descending"
+}
+
+// ============ 失败详情展开 ============
+const expandedErrorId = ref<string | null>(null)
+
+function toggleError(id: string) {
+  expandedErrorId.value = expandedErrorId.value === id ? null : id
+}
+
+async function copyError(task: PlanTask) {
+  const text = task.error || task.skipReason || ""
+  if (!text) return
+  try {
+    if (window.api?.copyText) {
+      const ok = await window.api.copyText(text)
+      if (ok === false) throw new Error("剪贴板不可用")
+    } else {
+      await navigator.clipboard.writeText(text)
+    }
+    logStore.append({
+      level: "INFO",
+      message: `已复制失败原因: ${task.name}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+  } catch (err) {
+    logStore.append({
+      level: "ERROR",
+      message: `复制失败原因失败: ${err instanceof Error ? err.message : String(err)}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+  }
+}
+
 // 双击行：打开媒体信息与 FFmpeg 命令面板
 function handleRowDblClick(task: PlanTask, event?: MouseEvent) {
   if (event && (event.target as HTMLElement).closest(".ck, .icon-btn, .t-ops")) return
@@ -349,6 +451,37 @@ const selectedTaskPreview = computed(() => {
 
 <template>
   <div class="table-container" data-testid="table-container">
+    <!-- 搜索 / 状态筛选 / 排序：仅改变展示，不影响勾选与执行顺序 -->
+    <div class="table-toolbar" data-testid="table-toolbar">
+      <input
+        v-model="query"
+        type="search"
+        class="tb-search"
+        placeholder="搜索文件名 / 路径…"
+        aria-label="搜索任务"
+        data-testid="input-task-search"
+      />
+      <select
+        v-model="statusFilter"
+        class="tb-filter"
+        aria-label="按状态筛选"
+        data-testid="select-status-filter"
+      >
+        <option v-for="f in STATUS_FILTERS" :key="f.value" :value="f.value">{{ f.label }}</option>
+      </select>
+      <span class="tb-count" data-testid="task-filter-count">
+        {{ visibleTasks.length }} / {{ planStore.tasks.length }}
+      </span>
+      <button
+        v-if="isFiltering"
+        class="btn btn-sm btn-ghost"
+        data-testid="btn-clear-filter"
+        @click="clearFilters"
+      >
+        清除筛选
+      </button>
+    </div>
+
     <div class="table-body-scroll">
       <table class="tasks" data-testid="tasks-table">
         <colgroup>
@@ -379,8 +512,18 @@ const selectedTaskPreview = computed(() => {
             </th>
             <th>#</th>
             <th>源文件</th>
-            <th>大小</th>
-            <th>时长</th>
+            <th :aria-sort="ariaSortFor('size')">
+              <button class="sort-btn" data-testid="sort-size" @click="toggleSort('size')">
+                大小
+                <span class="sort-arrow">{{ sortKey === 'size' ? (sortDir === 'asc' ? '▲' : '▼') : '' }}</span>
+              </button>
+            </th>
+            <th :aria-sort="ariaSortFor('duration')">
+              <button class="sort-btn" data-testid="sort-duration" @click="toggleSort('duration')">
+                时长
+                <span class="sort-arrow">{{ sortKey === 'duration' ? (sortDir === 'asc' ? '▲' : '▼') : '' }}</span>
+              </button>
+            </th>
             <th>解码 → 编码</th>
             <th>目标文件</th>
             <th>状态</th>
@@ -388,9 +531,8 @@ const selectedTaskPreview = computed(() => {
           </tr>
         </thead>
         <tbody data-testid="tasks-tbody">
+          <template v-for="task in visibleTasks" :key="task.id">
           <tr
-            v-for="task in planStore.tasks"
-            :key="task.id"
             :class="{
               sel: isRowSelectedOrActive(task.id),
               active: isRowActive(task.id),
@@ -451,6 +593,16 @@ const selectedTaskPreview = computed(() => {
                 <div v-if="task.status === 'running'" class="row-bar">
                   <i :style="{ width: `${task.progress || 0}%` }"></i>
                 </div>
+                <button
+                  v-if="task.status === 'failed'"
+                  class="err-toggle"
+                  :aria-expanded="expandedErrorId === task.id"
+                  title="查看失败原因"
+                  data-testid="btn-toggle-error"
+                  @click.stop="toggleError(task.id)"
+                >
+                  详情
+                </button>
               </div>
             </td>
             <td>
@@ -524,6 +676,42 @@ const selectedTaskPreview = computed(() => {
                   </svg>
                 </button>
               </div>
+            </td>
+          </tr>
+
+          <!-- 失败/跳过原因展开行 -->
+          <tr
+            v-if="expandedErrorId === task.id"
+            class="err-row"
+            :data-testid="`task-error-${task.id}`"
+          >
+            <td colspan="9">
+              <div class="err-box">
+                <span class="err-text selectable">{{ task.error || task.skipReason || '未知错误' }}</span>
+                <div class="err-ops">
+                  <button
+                    class="btn btn-sm btn-secondary"
+                    data-testid="btn-copy-error"
+                    @click.stop="copyError(task)"
+                  >
+                    复制错误
+                  </button>
+                  <button
+                    class="btn btn-sm btn-secondary"
+                    data-testid="btn-error-log"
+                    @click.stop="focusTaskLog(task, $event)"
+                  >
+                    查看日志
+                  </button>
+                </div>
+              </div>
+            </td>
+          </tr>
+          </template>
+
+          <tr v-if="visibleTasks.length === 0" class="no-match-row" data-testid="no-match-row">
+            <td colspan="9">
+              {{ planStore.tasks.length === 0 ? '暂无任务' : '无匹配任务，试试清除筛选' }}
             </td>
           </tr>
         </tbody>
@@ -674,6 +862,127 @@ const selectedTaskPreview = computed(() => {
   height: 100%;
   overflow: hidden;
   position: relative;
+}
+
+.table-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--bg-card);
+}
+
+.tb-search {
+  flex: 1;
+  min-width: 120px;
+  max-width: 340px;
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text-base);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tb-search:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.tb-filter {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-family: var(--font);
+  color: var(--text-base);
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.tb-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-3);
+  margin-left: auto;
+}
+
+.sort-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sort-btn:hover {
+  color: var(--primary-text);
+}
+
+.sort-arrow {
+  font-size: 8px;
+  min-width: 8px;
+}
+
+.no-match-row td {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.err-toggle {
+  margin-top: 4px;
+  padding: 0 6px;
+  height: 18px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--error);
+  background: var(--error-soft);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.err-toggle:hover {
+  border-color: var(--error);
+}
+
+.err-row td {
+  padding: 0 !important;
+  background: var(--error-soft);
+}
+
+.err-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 14px 10px 46px;
+}
+
+.err-text {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--error);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.err-ops {
+  flex: none;
+  display: flex;
+  gap: 6px;
 }
 
 .table-body-scroll {

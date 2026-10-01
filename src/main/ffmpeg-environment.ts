@@ -10,7 +10,7 @@ import {
   setFFmpegPath,
   TIERS,
 } from "../../core/transcode/index.js"
-import type { EnvironmentSummary } from "../shared/contracts.js"
+import type { EnvironmentSummary, PresetCatalog } from "../shared/contracts.js"
 
 export interface FfmpegEnvironmentDeps {
   /** 注入 Electron app 的应用路径（打包/开发两种布局的候选回退需要） */
@@ -186,6 +186,73 @@ export class FfmpegEnvironment {
   }
 
   /**
+   * 确保分层预设已加载。
+   *
+   * ⚠️ 失败判定必须在 `initPresetsAsync()` **之后**。
+   * 旧实现在加载前就看 `presets.getAllNames().length`，那个值在首次加载前恒为 0，
+   * 于是无条件进入分支、无条件打一行 `presets: bundled default not found at <找到的路径>`——
+   * 日志与事实相反（它打印的就是解析成功的路径），把人往「预设没找到」上带。
+   */
+  private async ensurePresetsLoaded(): Promise<void> {
+    if (this.presetsLoaded) return
+    // 不能把内置 default.yaml 当 customPath 传：loadPresetLayers(customPath) 的语义是
+    // 「**只**加载这一个文件」，那样 USER_SEARCH_PATHS（~/.mediac/presets.yaml、
+    // cwd/presets.yaml）永远用不上——GUI 用户在用户层加的预设/覆盖会被静默忽略。
+    // 不传 customPath 才会走完整分层。
+    await presets.initPresetsAsync()
+    this.presetsLoaded = true
+    if (!presets.getAllNames().length) {
+      const presetPath = this.resolvePresetPath()
+      throw new Error(
+        presetPath
+          ? `FFmpeg 预设解析失败：已找到 ${presetPath}，但未解析出任何预设`
+          : "FFmpeg 内置预设文件 default.yaml 未找到",
+      )
+    }
+  }
+
+  /** 公开预设列表（供 getSummary 与轻量通道共用） */
+  private presetList(): EnvironmentSummary["presets"] {
+    return presets.getAllNames().map((name: string) => {
+      const preset = presets.getPreset(name)
+      return {
+        name,
+        type: preset?.type || "video",
+        format: preset?.format || ".mp4",
+        videoCodecFamily: preset?.videoCodecFamily || "",
+        audioCodec: preset?.audioCodec || "",
+        videoQuality: preset?.videoQuality || 0,
+        videoBitrate: preset?.videoBitrate || 0,
+        audioBitrate: preset?.audioBitrate || 0,
+        dimension: preset?.dimension || 0,
+      }
+    })
+  }
+
+  /**
+   * 轻量目录：二进制定位 + 分层预设，**不做**硬件能力探测。
+   *
+   * 启动时先走这条：硬件探测（ffmpeg -version、枚举 244 个编码器、按 GPU 矩阵逐项探测）
+   * 耗时 1~2s，而左侧面板的预设下拉只依赖磁盘上的 YAML。
+   */
+  async getPresetCatalog(): Promise<PresetCatalog> {
+    await this.ensureFfmpegPath()
+    if (this.customFfprobePath && existsSync(this.customFfprobePath)) {
+      this.ffprobePath = this.customFfprobePath
+    } else if (!this.ffprobePath) {
+      this.ffprobePath = await resolveFFprobeBinary(this.ffmpegPath || undefined)
+    } else if (!existsSync(this.ffprobePath)) {
+      this.ffprobePath = await resolveFFprobeBinary(this.ffmpegPath || undefined)
+    }
+    await this.ensurePresetsLoaded()
+    return {
+      ffmpegPath: this.ffmpegPath,
+      ffprobePath: this.ffprobePath,
+      presets: this.presetList(),
+    }
+  }
+
+  /**
    * 读取 ffprobe 版本标识（首行 `ffprobe version <x> Copyright ...`）。
    * 只探测一次并缓存；失败返回 null —— 版本仅用于「关于」面板展示，不应影响任何能力。
    */
@@ -241,23 +308,7 @@ export class FfmpegEnvironment {
       logStartup(`cached ffprobe path no longer exists, re-resolving: ${this.ffprobePath}`)
       this.ffprobePath = await resolveFFprobeBinary(this.ffmpegPath || undefined)
     }
-    // ⚠️ 不能把内置 default.yaml 当 customPath 传：
-    // loadPresetLayers(customPath) 的语义是「**只**加载这一个文件」，
-    // 于是 USER_SEARCH_PATHS（~/.mediac/presets.yaml、cwd/presets.yaml）
-    // 永远用不上 —— GUI 用户在用户层加的预设/覆盖被静默忽略，
-    // 而 loader 与 initPresetsAsync 的注释都宣称支持三层。
-    // 正确做法是不传 customPath，让它走完整分层；内置层由 DEFAULT_PRESET_PATH
-    // 自行定位。这里只在"内置文件确实找不到"时才抛错。
-    if (!presets.getAllNames().length) {
-      const presetPath = this.resolvePresetPath()
-      if (!presetPath) throw new Error("Bundled FFmpeg preset file was not found")
-      logStartup(`presets: bundled default not found at ${presetPath}; relying on layered search`)
-    }
-    // 分层结果只与磁盘上的 YAML 有关，进程内只需加载一次
-    if (!this.presetsLoaded) {
-      await presets.initPresetsAsync()
-      this.presetsLoaded = true
-    }
+    await this.ensurePresetsLoaded()
     if (this.ffmpegPath && !this.hardware) {
       // detectHardwareCapabilities 的 JSDoc 只声明 `Promise<object>`，按其文档形状断言
       this.hardware = (await detectHardwareCapabilities({
@@ -284,20 +335,7 @@ export class FfmpegEnvironment {
       ffmpegVersion: this.hardware?.version || null,
       ffprobeVersion,
       mediainfoPath: this.customMediainfoPath,
-      presets: presets.getAllNames().map((name: string) => {
-        const preset = presets.getPreset(name)
-        return {
-          name,
-          type: preset?.type || "video",
-          format: preset?.format || ".mp4",
-          videoCodecFamily: preset?.videoCodecFamily || "",
-          audioCodec: preset?.audioCodec || "",
-          videoQuality: preset?.videoQuality || 0,
-          videoBitrate: preset?.videoBitrate || 0,
-          audioBitrate: preset?.audioBitrate || 0,
-          dimension: preset?.dimension || 0,
-        }
-      }),
+      presets: this.presetList(),
       hardware: {
         gpus: (this.hardware?.gpus || []).map((g) => ({
           vendor: g.vendor || "Unknown",

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
+import { ref, watch, computed } from "vue"
 import { useConfigStore } from "../stores/config"
 import { useLogStore } from "../stores/log"
 import { useEnvStore } from "../stores/env"
+import { useToast } from "../composables/useToast"
+import { useFocusTrap } from "../composables/useFocusTrap"
 
 const props = defineProps<{
   show: boolean
@@ -15,6 +17,11 @@ const emit = defineEmits<{
 const configStore = useConfigStore()
 const logStore = useLogStore()
 const envStore = useEnvStore()
+const toast = useToast()
+
+// 模态焦点陷阱：打开时聚焦弹窗内首个可聚焦元素，Tab 循环，关闭后焦点归位
+const modalRef = ref<HTMLElement | null>(null)
+useFocusTrap(modalRef, computed(() => props.show))
 
 const currentTheme = ref(document.documentElement.getAttribute("data-theme") || "light")
 
@@ -76,7 +83,7 @@ async function saveSettings() {
       message: `更新外部工具路径失败: ${msg}`,
       timestamp: new Date().toLocaleTimeString(),
     })
-    alert(`更新外部工具路径失败：\n${msg}`)
+    toast.push(`更新外部工具路径失败：${msg}`, "error")
     // 保持弹窗打开，让用户能看到自己填的路径并修正
     return
   }
@@ -125,7 +132,15 @@ function handleDeleteSourceToggle() {
 
 <template>
   <div v-if="show" class="modal-mask" data-testid="settings-modal-mask" @click.self="emit('close')">
-    <div class="modal" role="dialog" aria-modal="true" aria-label="设置" data-testid="settings-modal">
+    <div
+      ref="modalRef"
+      class="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="设置"
+      tabindex="-1"
+      data-testid="settings-modal"
+    >
       <div class="modal-title">
         <span>设置</span>
         <button class="icon-btn" title="关闭 (Esc)" @click="emit('close')">

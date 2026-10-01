@@ -28,6 +28,7 @@ import {
 import type {
   EngineEvent,
   EnvironmentSummary,
+  PresetCatalog,
   MediaInfoPayload,
   PlanTask,
   PublicPlanSnapshot,
@@ -177,6 +178,11 @@ class DesktopTranscodeService {
   /** 环境摘要（二进制/预设/硬件/系统），IPC ENV_GET 使用 */
   getSummary(): Promise<EnvironmentSummary> {
     return this.environment.getSummary()
+  }
+
+  /** 轻量预设目录（不含硬件探测），IPC ENV_GET_PRESETS 使用 */
+  getPresetCatalog(): Promise<PresetCatalog> {
+    return this.environment.getPresetCatalog()
   }
 
   /** 设置自定义工具路径并刷新环境探测 */
