@@ -3,6 +3,7 @@ import { execFileSync, execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import {
+  codecFamilyOfPreset,
   collectInputFiles,
   createFFmpegArgs,
   createFFmpegEngine,
@@ -527,6 +528,8 @@ class DesktopTranscodeService {
               codec: previewInfo?.video?.format || "",
               pixFmt: previewInfo?.video?.pixelFormat || "",
               bitDepth: previewInfo?.video?.bitDepth,
+              // 目标输出 codec 族：编码侧预筛（如预 Ada 的 N 卡不支持 AV1 编码）
+              codecFamily: codecFamilyOfPreset(activePreset),
             }),
           )
           const rawArgs = buildResult?.args ? buildResult.args.flat() : []

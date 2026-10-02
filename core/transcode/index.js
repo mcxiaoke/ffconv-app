@@ -19,5 +19,6 @@ export { buildCliTask } from "./ffmpeg_task.js"
 export { resolveFFmpegBinary, resolveFFprobeBinary } from "./ffmpeg_bin.js"
 // 媒体元数据探测是转码前置能力，统一经 facade 暴露，避免宿主直连 legacy lib/
 export { getMediaInfo } from "../lib/mediainfo.js"
-export { TIERS, resolvePreviewHwPlan } from "./hwaccel.js"
+// codecFamilyOfPreset：宿主生成「预计命令」时需要目标输出 codec 族（编码侧预筛入参）
+export { TIERS, codecFamilyOfPreset, resolvePreviewHwPlan } from "./hwaccel.js"
 export { detectHardwareCapabilities } from "./hwdetect.js"

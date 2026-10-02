@@ -22,9 +22,9 @@ import which from "which"
 import * as helper from "../lib/helper.js"
 import * as log from "../lib/debug.js"
 import { candidateTiers, primaryVendor, SWDEC_ENCODERS_BY_VENDOR } from "./hwdetect.js"
-import { nvdecSupportOf } from "./gpu.js"
+import { nvdecSupportOf, nvencSupportOf } from "./gpu.js"
 import { calcLongEdge } from "./hwaccel_scale.js"
-import { buildProbeArgs } from "./hwaccel_args.js"
+import { ENCODER_MATRIX, buildProbeArgs } from "./hwaccel_args.js"
 
 // ---------------------------------------------------------------------------
 // 向后兼容 Re-exports（保持对现有调用方和单测 100% 兼容）
@@ -396,6 +396,34 @@ function gpuBlocksDecode(caps, tier, { codec, pixFmt, bitDepth }, decodeMode) {
 }
 
 /**
+ * 该层使用 NVIDIA NVENC 编码，但当前代次**明确不支持**目标编码族时返回 true。
+ *
+ * 与解码矩阵不同：编码矩阵**不参与** selectTier 预筛（缩放链路已把 4:2:2/4:4:4
+ * 转成 4:2:0，NVENC 的色度限制不触发，见 gpu.js 的 NVENC_MATRIX 注释）。
+ * 唯一不会被缩放化解的是 AV1 编码「仅 Ada(40 系) 起支持」：预 Ada 的 N 卡跑
+ * av1 预设时，cuda/swdec/d3d 三层的 av1_nvenc 都会在真实执行期探测失败并降级。
+ *
+ * 该判定只用于**预览**（resolvePreviewHwPlan），不改动 selectTier 与执行行为。
+ *
+ * @param {object} caps detectHardwareCapabilities 的结果（需含 gpuProbe.generation）
+ * @param {object} tier 候选层
+ * @param {string} codecFamily 目标输出 codec 族（h264/hevc/av1/vp9）
+ * @returns {boolean}
+ */
+function nvencEncodeBlocked(caps, tier, codecFamily) {
+    const generation = caps?.gpuProbe?.generation
+    if (!generation || !codecFamily) return false
+    // 与 buildVideoArgsFromPlan 同源解析该层的编码器（swdec 用厂商行）
+    const encoder =
+        tier.name === "swdec"
+            ? tier.encoderRow?.[codecFamily]
+            : ENCODER_MATRIX[tier.name]?.[codecFamily]
+    if (!encoder || !/_nvenc$/.test(encoder)) return false
+    // h264/hevc 的 yuv420p 全代次为 yes，不会命中；vp9 无矩阵数据返回 null 亦不命中
+    return nvencSupportOf(generation, codecFamily, "yuv420p") === "no"
+}
+
+/**
  * 预览专用的分层计划（**不做**逐文件 ffmpeg 干跑）
  *
  * 与 selectTier 的关系：两者共用第一层 `resolveTiers`（硬件能力候选链）与同一套
@@ -416,9 +444,10 @@ function gpuBlocksDecode(caps, tier, { codec, pixFmt, bitDepth }, decodeMode) {
  * @param {string} [opts.hwaccel] 显式层名（decodeMode=auto 时可缺省）
  * @param {string} [opts.path] 源文件路径（用于识别音频文件）
  * @param {string} [opts.presetType] 预设类型（audio 时不做视频分层）
- * @param {string} [opts.codec] 源视频编码（矩阵预筛用）
- * @param {string} [opts.pixFmt] 源像素格式（矩阵预筛用）
- * @param {number|string} [opts.bitDepth] 源位深（矩阵预筛用）
+ * @param {string} [opts.codec] 源视频编码（解码矩阵预筛用）
+ * @param {string} [opts.pixFmt] 源像素格式（解码矩阵预筛用）
+ * @param {number|string} [opts.bitDepth] 源位深（解码矩阵预筛用）
+ * @param {string} [opts.codecFamily] 目标输出 codec 族（编码矩阵预筛用，缺省不预筛）
  * @returns {object} 与 resolveHwPlan 同形：{ tier, size, degraded, tried, reason, caps }
  */
 export function resolvePreviewHwPlan({
@@ -430,6 +459,7 @@ export function resolvePreviewHwPlan({
     codec = "",
     pixFmt = "",
     bitDepth,
+    codecFamily = "",
 } = {}) {
     const cpuTier = TIERS.find((t) => t.name === "cpu")
     const cpuFallback = (reason) => ({
@@ -461,8 +491,15 @@ export function resolvePreviewHwPlan({
     const tried = []
     for (const tier of tiers) {
         tried.push(tier.name)
-        // 与 selectTier 完全同一套预筛：auto 模式下矩阵「明确不支持」的组合跳过
+        // 与 selectTier 完全同一套预筛：auto 模式下解码矩阵「明确不支持」的组合跳过
         if (gpuBlocksDecode(caps, tier, { codec, pixFmt, bitDepth }, decodeMode)) continue
+        // 编码侧：该层用 NVENC 且本代次不支持目标编码族（如预 Ada 的 AV1）时跳过
+        if (nvencEncodeBlocked(caps, tier, codecFamily)) {
+            log.debug(
+                `resolvePreviewHwPlan: skip tier '${tier.name}' (NVENC has no '${codecFamily}' encode on this GPU generation)`,
+            )
+            continue
+        }
         return {
             tier,
             size: null,

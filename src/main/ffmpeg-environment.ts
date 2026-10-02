@@ -189,6 +189,7 @@ export class FfmpegEnvironment {
     codec?: string
     pixFmt?: string
     bitDepth?: number | string
+    codecFamily?: string
   } = {}) {
     return resolvePreviewHwPlan({ caps: this.hardware, ...options })
   }

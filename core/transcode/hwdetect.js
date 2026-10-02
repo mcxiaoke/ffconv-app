@@ -163,12 +163,31 @@ export function parseVersionInfo(stdout) {
 }
 
 /**
+ * 从探测的 stderr 里取一条可读原因（只用于日志，避免整段输出）
+ *
+ * 形如 `[h264_qsv @ 000002a1] Error creating a MFX session: -9.`
+ * → 去掉带地址的方括号前缀，保留真正的原因文本
+ *   （ffmpeg 打印的地址是不带 `0x` 的十六进制，如 `[AVHWDeviceContext @ 00000192eb3ea8c0]`）。
+ */
+function probeFailureReason(stderr) {
+    const lines = String(stderr || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+    if (lines.length === 0) return "no output"
+    const hit = lines.find((line) => /error|failed|unavailable|unsupported|not found/i.test(line))
+    const text = (hit || lines[0]).replace(/^\[[^\]]+ @ (?:0x)?[0-9a-f]+\]\s*/i, "")
+    return text.slice(0, 240)
+}
+
+/**
  * 真实设备初始化探测：某些编码器虽然列在 -encoders 里，但设备不可用
- * （典型：无 A 卡时 h264_amf 报 "DLL amfrt64.dll failed to open"）
+ * （典型：无 A 卡时 h264_amf 报 "DLL amfrt64.dll failed to open"，
+ *   或 oneVPL 构建报 "Error creating a MFX session: -9"）
  *
- * 用最小命令跑 1 帧到 null，只看退出码。
+ * 用最小命令跑 1 帧到 null，只看退出码；失败时一并回传原因供日志排查。
  *
- * @returns {Promise<boolean>}
+ * @returns {Promise<{ok: boolean, reason: string}>} reason 仅在 ok=false 时有意义
  * @param {AbortSignal} [signal] 取消探测的信号
  */
 async function probeDeviceUsable(bin, { hwaccel, encoder, timeoutMs = 8000, signal = null }) {
@@ -196,9 +215,11 @@ async function probeDeviceUsable(bin, { hwaccel, encoder, timeoutMs = 8000, sign
             cleanup: true,
             ...(signal ? { cancelSignal: signal } : {}),
         })
-        return res.exitCode === 0
-    } catch {
-        return false
+        if (res.timedOut) return { ok: false, reason: `timed out after ${timeoutMs}ms` }
+        if (res.exitCode === 0) return { ok: true, reason: "" }
+        return { ok: false, reason: probeFailureReason(res.stderr) }
+    } catch (error) {
+        return { ok: false, reason: String(error?.message || "probe failed").slice(0, 240) }
     }
 }
 
@@ -302,9 +323,9 @@ async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, f
         if (staticOk.cuda) {
             probes.push(
                 probeDeviceUsable(bin, { hwaccel: "cuda", encoder: "h264_nvenc", signal }).then(
-                    (ok) => {
+                    ({ ok, reason }) => {
                         usable.cuda = ok
-                        probeDetail.cuda = ok ? "device ok" : "device init failed"
+                        probeDetail.cuda = ok ? "device ok" : `device init failed: ${reason}`
                     },
                 ),
             )
@@ -312,9 +333,9 @@ async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, f
         if (staticOk.qsv) {
             probes.push(
                 probeDeviceUsable(bin, { hwaccel: "qsv", encoder: "h264_qsv", signal }).then(
-                    (ok) => {
+                    ({ ok, reason }) => {
                         usable.qsv = ok
-                        probeDetail.qsv = ok ? "device ok" : "device init failed"
+                        probeDetail.qsv = ok ? "device ok" : `device init failed: ${reason}`
                     },
                 ),
             )
@@ -323,11 +344,11 @@ async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, f
             // AMF 无独立解码 hwaccel，直接测编码器
             probes.push(
                 probeDeviceUsable(bin, { hwaccel: null, encoder: "h264_amf", signal }).then(
-                    (ok) => {
+                    ({ ok, reason }) => {
                         usable.amf = ok
                         probeDetail.amf = ok
                             ? "device ok"
-                            : "DLL/device unavailable (e.g. amfrt64.dll)"
+                            : `DLL/device unavailable (e.g. amfrt64.dll): ${reason}`
                     },
                 ),
             )
@@ -336,9 +357,9 @@ async function doDetectHardwareCapabilities({ ffmpegPath, deviceProbe, signal, f
             // d3d 只做解码，配 libx264 编码验证解码链路
             probes.push(
                 probeDeviceUsable(bin, { hwaccel: "d3d11va", encoder: "libx264", signal }).then(
-                    (ok) => {
+                    ({ ok, reason }) => {
                         usable.d3d = ok
-                        probeDetail.d3d = ok ? "device ok" : "device init failed"
+                        probeDetail.d3d = ok ? "device ok" : `device init failed: ${reason}`
                     },
                 ),
             )
@@ -421,6 +442,15 @@ function logEnvironment(bin, caps) {
                 `encode=${caps.gpuProbe.encode.length} entries ` +
                 `(see lib/gpu.js matrix; 'no' entries are skipped before probe)`,
         )
+    }
+    // 设备探测失败的具体原因：只列「静态具备、实际探测过且失败」的层。
+    // 此前只写 "device init failed"，用户无法判断是驱动、构建还是设备缺失
+    // （例如 oneVPL 构建报 "Error creating a MFX session: -9"，换构建即恢复）。
+    const probeFailures = Object.entries(caps.probeDetail || {})
+        .filter(([tier, detail]) => caps.usable?.[tier] === false && detail !== "device ok")
+        .map(([tier, detail]) => `${tier}: ${detail}`)
+    if (probeFailures.length > 0) {
+        log.logInfo("hwdetect", `device probe failed (usable=false): ${probeFailures.join(" | ")}`)
     }
 }
 

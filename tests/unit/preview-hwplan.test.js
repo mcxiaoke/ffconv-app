@@ -94,3 +94,46 @@ test("返回值形状与 resolveHwPlan 一致（tier/size/degraded/tried/reason/
     }
     assert.equal(plan.caps, caps)
 })
+
+/** 带 GPU 矩阵代次的 N 卡 caps（gen 见 gpu.js NVIDIA_GEN：30=Ampere，40=Ada） */
+function nvidiaCapsOfGeneration(generation) {
+    const caps = nvidiaCaps()
+    caps.gpus = [{ vendor: "nvidia", model: "RTX", generation }]
+    caps.gpuProbe = { vendor: "nvidia", model: "RTX", generation, arch: `gen${generation}` }
+    return caps
+}
+
+test("编码侧预筛：预 Ada 的 N 卡跑 AV1 → 所有 NVENC 层被跳过，回落 cpu", () => {
+    const plan = resolvePreviewHwPlan({
+        caps: nvidiaCapsOfGeneration(30), // Ampere：NVENC 无 AV1 编码
+        codecFamily: "av1",
+    })
+    assert.equal(plan.tier.name, "cpu")
+    // cuda / swdec / d3d 三层都用 *_nvenc 被跳过；cpu 层用 libsvtav1 不受影响，正常入选
+    assert.deepEqual(plan.tried, ["cuda", "swdec", "d3d", "cpu"])
+    assert.equal(plan.degraded, true)
+})
+
+test("编码侧预筛：Ada(40 系) 起支持 AV1 编码 → 仍取 cuda", () => {
+    const plan = resolvePreviewHwPlan({
+        caps: nvidiaCapsOfGeneration(40),
+        codecFamily: "av1",
+    })
+    assert.equal(plan.tier.name, "cuda")
+})
+
+test("编码侧预筛不影响 h264/hevc（NVENC 全代次支持 yuv420p）", () => {
+    for (const family of ["h264", "hevc"]) {
+        const plan = resolvePreviewHwPlan({
+            caps: nvidiaCapsOfGeneration(30),
+            codecFamily: family,
+        })
+        assert.equal(plan.tier.name, "cuda", `${family} 不应被编码预筛拦下`)
+    }
+})
+
+test("无 gpuProbe 代次时不启用编码侧预筛（不误伤）", () => {
+    // nvidiaCaps() 无 gpuProbe → 拿不到代次，编码矩阵无从查表
+    const plan = resolvePreviewHwPlan({ caps: nvidiaCaps(), codecFamily: "av1" })
+    assert.equal(plan.tier.name, "cuda")
+})
