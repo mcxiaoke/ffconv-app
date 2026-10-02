@@ -55,7 +55,10 @@ npm run package:win  # build + electron-builder（nsis/portable/zip）→ releas
 
 ## 测试
 
-- 测试为 Playwright e2e（`tests/e2e/`），先 `npm run build` 再 `npm run test:e2e`。
+- 单元测试为 Node 内置 runner（`tests/unit/`，`npm run test:unit`，零额外依赖）：
+  覆盖纯函数与契约校验（preset schema、helper 路径/码率工具、`sanitizeSettings`）。
+  `.ts` 直接用 Node 类型剥离加载，故须跑在 Node ≥ 22.18 / 24。
+- 集成/端到端测试为 Playwright e2e（`tests/e2e/`），先 `npm run build` 再 `npm run test:e2e`。
 - 每个用例经 `tests/e2e/fixtures.ts` 用**独立 `--user-data-dir`** 启动，避免
   `userData/settings.json` 里的持久化设置跨用例污染。
 - 跑 e2e 前须先关掉正在运行的实例：`requestSingleInstanceLock()` 失败会让新实例立刻

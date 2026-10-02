@@ -87,7 +87,15 @@ function openOutputDir() {
     (planStore.tasks[0]?.fileDst
       ? planStore.tasks[0].fileDst.replace(/[/\\][^/\\]+$/, "")
       : "")
-  if (!dir) return
+  if (!dir) {
+    // 静默 return 会让用户以为按钮坏了：给一条可查的反馈
+    logStore.append({
+      level: "WARN",
+      message: "暂时无法确定输出目录：请先在左侧设置输出位置，或先完成一次扫描。",
+      timestamp: new Date().toLocaleTimeString(),
+    })
+    return
+  }
   if (window.api?.openPath) {
     // 主进程白名单校验失败会 reject；裸 void 调用会让用户以为按钮坏了
     void window.api.openPath(dir).catch((err: unknown) => {

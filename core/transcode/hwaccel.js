@@ -19,6 +19,7 @@
 
 import { execa } from "execa"
 import which from "which"
+import * as helper from "../lib/helper.js"
 import * as log from "../lib/debug.js"
 import { candidateTiers, primaryVendor, SWDEC_ENCODERS_BY_VENDOR } from "./hwdetect.js"
 import { nvdecSupportOf } from "./gpu.js"
@@ -392,6 +393,93 @@ function gpuBlocksDecode(caps, tier, { codec, pixFmt, bitDepth }, decodeMode) {
     if (tier.name !== "cuda" && tier.name !== "d3d") return false
     const verdict = nvdecSupportOf(probe.generation, codec, pixFmt, bitDepth)
     return verdict === "no"
+}
+
+/**
+ * 预览专用的分层计划（**不做**逐文件 ffmpeg 干跑）
+ *
+ * 与 selectTier 的关系：两者共用第一层 `resolveTiers`（硬件能力候选链）与同一套
+ * 「GPU 矩阵明确不支持则跳过」预筛（gpuBlocksDecode）；区别只在于本函数**不执行**
+ * `probeLayer`（即 `ffmpeg -frames:v ... -f null -` 干跑）。
+ *
+ * 因此结果是「按本机能力，这个文件**大概率**会走哪一层」，而非确定结论：
+ *   - 命中：绝大多数文件（能力层即真实层）；
+ *   - 偏差：文件本身解不开（损坏/非常规像素格式）导致真实执行逐层降级，
+ *           或失败重试把 decodeMode 强制为 cpu。
+ *   - 音频文件/音频预设与 resolveHwPlan 同口径，直接给 cpu 层占位。
+ *
+ * 绝不抛错：预览生成失败会让整个计划构建失败，故任何异常都回落 cpu 层。
+ *
+ * @param {object} opts
+ * @param {object|null} [opts.caps] detectHardwareCapabilities 的结果（可为 null）
+ * @param {string} [opts.decodeMode] DecodeMode 之一
+ * @param {string} [opts.hwaccel] 显式层名（decodeMode=auto 时可缺省）
+ * @param {string} [opts.path] 源文件路径（用于识别音频文件）
+ * @param {string} [opts.presetType] 预设类型（audio 时不做视频分层）
+ * @param {string} [opts.codec] 源视频编码（矩阵预筛用）
+ * @param {string} [opts.pixFmt] 源像素格式（矩阵预筛用）
+ * @param {number|string} [opts.bitDepth] 源位深（矩阵预筛用）
+ * @returns {object} 与 resolveHwPlan 同形：{ tier, size, degraded, tried, reason, caps }
+ */
+export function resolvePreviewHwPlan({
+    caps = null,
+    decodeMode = DecodeMode.AUTO,
+    hwaccel,
+    path = "",
+    presetType = "",
+    codec = "",
+    pixFmt = "",
+    bitDepth,
+} = {}) {
+    const cpuTier = TIERS.find((t) => t.name === "cpu")
+    const cpuFallback = (reason) => ({
+        tier: cpuTier,
+        size: null,
+        degraded: false,
+        tried: ["cpu"],
+        reason,
+        caps,
+    })
+
+    // 与 resolveHwPlan 同口径：音频文件/纯音频预设不做视频分层
+    const isAudio = (path && helper.isAudioFile(path)) || presetType === "audio"
+    if (isAudio) return cpuFallback("preview: audio (cpu placeholder)")
+    if (!caps) return cpuFallback("preview: hardware caps unavailable, cpu placeholder")
+
+    let tiers
+    try {
+        tiers = resolveTiers({ caps, decodeMode, hwaccel })
+    } catch (error) {
+        // decodeMode=gpu 且 hwaccel 非法/设备不可用时 resolveTiers 会抛错。
+        // 预览只是展示，绝不能因此让计划构建失败。
+        log.debug(
+            `resolvePreviewHwPlan: resolveTiers failed, fall back to cpu: ${error?.message || error}`,
+        )
+        return cpuFallback(`preview: cpu fallback (${error?.message || "resolveTiers failed"})`)
+    }
+
+    const tried = []
+    for (const tier of tiers) {
+        tried.push(tier.name)
+        // 与 selectTier 完全同一套预筛：auto 模式下矩阵「明确不支持」的组合跳过
+        if (gpuBlocksDecode(caps, tier, { codec, pixFmt, bitDepth }, decodeMode)) continue
+        return {
+            tier,
+            size: null,
+            degraded: tried.length > 1,
+            tried,
+            reason: `preview: capability-level tier '${tier.name}' (no per-file ffmpeg probe)`,
+            caps,
+        }
+    }
+    return {
+        tier: cpuTier,
+        size: null,
+        degraded: true,
+        tried,
+        reason: "preview: all candidate tiers pre-filtered, cpu placeholder",
+        caps,
+    }
 }
 
 /**

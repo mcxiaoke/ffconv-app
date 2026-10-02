@@ -19,6 +19,7 @@
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
+    "test:unit": "node --test \"tests/unit/*.test.js\"",
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "package:win": "npm run build && electron-builder --win && node ./scripts/post_package.cjs"
   },

@@ -30,9 +30,13 @@ const statusText = computed(() => STATUS_TEXT[task.value?.status || ""] || "等�
 
 /**
  * 命令来源：
- *  - "plan"     —— 扫描时由主进程生成的实际命令（含硬件加速与逐文件参数）；
- *  - "estimate" —— 尚未扫描时，本组件按当前设置拼接的**估算**命令，
- *                  与实际执行的命令无关，必须在 UI 上明确区分。
+ *  - "plan"     —— 扫描期由主进程按**能力级分层**生成的**预计**命令：走候选链
+ *                  （resolvePreviewHwPlan）并复用 GPU 支持矩阵预筛，但不做逐文件
+ *                  ffmpeg 干跑（`-frames:v ... -f null -`）。多数文件与真实执行一致；
+ *                  个别文件（本身解不开、矩阵明确不支持、失败重试强制 cpu）可能降级，
+ *                  故仍标注「预计」而非「实际」；
+ *  - "estimate" —— 尚未扫描时，本组件按当前设置拼接的**预览**命令。
+ *  两者都不是最终命令，差异来源须在 UI 上标注。
  */
 const cmdSource = computed<"plan" | "estimate">(() =>
   plan.planSnapshot?.previewCmd ? "plan" : "estimate"
@@ -313,7 +317,7 @@ function startResizing(e: MouseEvent) {
         <!-- FFmpeg 命令行推演卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>FFmpeg 命令{{ cmdSource === "plan" ? "" : "（预览）" }}</span>
+            <span>FFmpeg 命令（{{ cmdSource === "plan" ? "预计" : "预览" }}）</span>
             <button class="btn btn-sm" data-testid="btn-copy-cmd" @click="copyCmd">
               <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
                 <rect x="9" y="9" width="13" height="13" rx="2" />
@@ -322,8 +326,11 @@ function startResizing(e: MouseEvent) {
               {{ copiedCmd ? '已复制' : '复制' }}
             </button>
           </div>
-          <div v-if="cmdSource === 'estimate'" class="cmd-warn" data-testid="cmd-estimate-warn">
-            尚未扫描：这里按当前设置估算。点击「扫描」后会显示实际使用的命令。
+          <div v-if="cmdSource === 'plan'" class="cmd-warn" data-testid="cmd-plan-warn">
+            预计命令：按本机硬件能力推断的分层（已套用 GPU 支持矩阵预筛），未对文件逐个干跑探测。真实执行时该文件若解不开或失败重试，可能降级为软件编码。
+          </div>
+          <div v-else class="cmd-warn" data-testid="cmd-estimate-warn">
+            尚未扫描：这里按当前设置预览，与执行时按文件探测得出的命令无关。点击「扫描」后可看到按本机能力推断的预计命令。
           </div>
           <div class="cmd-box" data-testid="insp-cmd-box" v-html="highlightedCmd"></div>
         </div>

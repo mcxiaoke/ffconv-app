@@ -242,18 +242,37 @@ export const useConfigStore = defineStore("config", () => {
     hydrated.value = true
   }
 
+  function persistNow(): Promise<void> | undefined {
+    return window.api?.saveSettings?.(snapshotForPersist())?.then(
+      () => undefined,
+      (err: unknown) => {
+        console.error("Failed to persist settings:", err)
+      },
+    )
+  }
+
   function schedulePersist() {
     if (!hydrated.value) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
-      const pending = window.api?.saveSettings?.(snapshotForPersist())
-      if (pending) {
-        void pending.catch((err: unknown) => {
-          console.error("Failed to persist settings:", err)
-        })
-      }
+      void persistNow()
     }, 400)
+  }
+
+  /**
+   * 立即写盘并取消待执行的防抖计时器。
+   *
+   * 供窗口关闭/退出前调用：防抖窗口（400ms）内关窗会让「最后一次改动」丢失。
+   * 属尽力而为——关闭流程来不及 await，但能显著缩小丢失窗口，且不改变既有语义。
+   */
+  function flushPersist(): void {
+    if (!hydrated.value) return
+    if (saveTimer) {
+      clearTimeout(saveTimer)
+      saveTimer = null
+    }
+    void persistNow()
   }
 
   watch(
@@ -266,6 +285,7 @@ export const useConfigStore = defineStore("config", () => {
     hydrated,
     hydrate,
     snapshotForPersist,
+    flushPersist,
     inputs,
     outputDir,
     outputBesideSource,

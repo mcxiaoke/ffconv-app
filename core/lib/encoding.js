@@ -272,7 +272,7 @@ export function hasBadCJKChar(str) {
  */
 export function showBadCJKChars(str) {
     const chars = Array.from(str).filter((c) => REGEX_MESSY_CJK.test(c))
-    console.log("BadCJKChars:", chars)
+    log.debug("BadCJKChars:", chars)
 }
 
 /**

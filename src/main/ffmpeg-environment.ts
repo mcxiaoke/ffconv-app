@@ -7,8 +7,8 @@ import {
   presets,
   resolveFFmpegBinary,
   resolveFFprobeBinary,
+  resolvePreviewHwPlan,
   setFFmpegPath,
-  TIERS,
 } from "../../core/transcode/index.js"
 import type { EnvironmentSummary, PresetCatalog } from "../shared/contracts.js"
 
@@ -174,15 +174,23 @@ export class FfmpegEnvironment {
   }
 
   /**
-   * 计划阶段的示意硬件分层。
-   * 任务真正的 hwPlan 要到执行期才由 runFFmpegCmd 注入，计划期传 null 会让
-   * createFFmpegArgs 直接返回空参数（无 -c:v、无缩放），预览命令与实际执行严重不符。
-   * 这里用 CPU 分层 + 本机已探测能力构造一份示意计划，保证预览至少含编码器与缩放段。
+   * 计划阶段的**预计**硬件分层（不做逐文件 ffmpeg 干跑）。
+   *
+   * 任务真正的 hwPlan 要到执行期才由 runFFmpegCmd 逐文件探测后注入，计划期传 null 会让
+   * createFFmpegArgs 直接返回空参数（无 -c:v、无缩放）。这里走引擎的能力级决策
+   * （resolvePreviewHwPlan：候选链 + GPU 矩阵预筛，复用执行期同一套规则），
+   * 使预览反映「本机大概率会用哪一层」，而不是恒为软件编码。
    */
-  buildPreviewHwPlan() {
-    const tiers: Array<{ name?: string }> = Array.isArray(TIERS) ? TIERS : []
-    const cpuTier = tiers.find((tier) => tier?.name === "cpu")
-    return { tier: cpuTier || { name: "cpu" }, caps: this.hardware }
+  buildPreviewHwPlan(options: {
+    decodeMode?: string
+    hwaccel?: string
+    path?: string
+    presetType?: string
+    codec?: string
+    pixFmt?: string
+    bitDepth?: number | string
+  } = {}) {
+    return resolvePreviewHwPlan({ caps: this.hardware, ...options })
   }
 
   /**

@@ -19,6 +19,7 @@
 import path from "path"
 import { getPresetSearchPaths, loadPresetLayers, mergePresets } from "./preset_loader.js"
 import { parseBitrate } from "../lib/helper.js"
+import * as log from "../lib/debug.js"
 
 /**
  * FFmpeg命令参数预设类
@@ -316,7 +317,7 @@ function applyFfargs(argv, ffargs) {
                             result[normalizedKey] = normalized
                         }
                     } catch {
-                        console.warn(
+                        log.warn(
                             `Invalid ffargs bitrate value: "${key}=${value}" (expected e.g. 233k / 2M / 2000000)`,
                         )
                     }
@@ -367,7 +368,7 @@ function applyFfargs(argv, ffargs) {
             }
         } else {
             // 非白名单参数：warn 提示，不静默丢弃
-            console.warn(
+            log.warn(
                 `Unknown ffargs key: "${key}". Valid keys: ${Object.keys(ARG_ALIASES).join(", ")}.`,
             )
         }

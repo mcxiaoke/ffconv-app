@@ -367,6 +367,11 @@ test.describe("MediCli Desktop - Interaction & State Machine Spec", () => {
     await expect(cmdBox).toContainText("ffmpeg")
     await expect(cmdBox).toContainText("-i")
 
+    // 未扫描（staged）态：必须标注为「预览」并给出与执行无关的说明
+    await expect(appWindow.locator(".insp-card-title").filter({ hasText: "FFmpeg 命令" })).toContainText("预览")
+    await expect(appWindow.locator('[data-testid="cmd-estimate-warn"]')).toBeVisible()
+    await expect(appWindow.locator('[data-testid="cmd-plan-warn"]')).toHaveCount(0)
+
     // Test Escape key closes TaskInspectorDrawer
     await appWindow.keyboard.press("Escape")
     await expect(inspector).not.toBeVisible()

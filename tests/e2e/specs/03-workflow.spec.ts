@@ -57,6 +57,17 @@ test.describe("MediCli Desktop - Real Transcode Workflow Spec", () => {
     const stateTag = appWindow.locator('[data-testid="state-tag"]')
     await expect(stateTag).toHaveText("就绪", { timeout: 15000 })
 
+    // 3a. 计划就绪后命令卡升级为「预计」：走能力级分层（不做逐文件干跑），
+    //     必须给出降级说明，且不再显示未扫描态的黄条
+    await taskRow.dblclick()
+    const cmdInspector = appWindow.locator('[data-testid="inspector-mask"]')
+    await expect(cmdInspector).toBeVisible()
+    await expect(appWindow.locator(".insp-card-title").filter({ hasText: "FFmpeg 命令" })).toContainText("预计")
+    await expect(appWindow.locator('[data-testid="cmd-plan-warn"]')).toBeVisible()
+    await expect(appWindow.locator('[data-testid="cmd-estimate-warn"]')).toHaveCount(0)
+    await appWindow.keyboard.press("Escape")
+    await expect(cmdInspector).not.toBeVisible()
+
     await appWindow.screenshot({ path: path.join(screenshotDir, "02-plan-ready.png") })
 
     // 4. Start Transcode Execution

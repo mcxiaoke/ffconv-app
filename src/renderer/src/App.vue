@@ -510,9 +510,15 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+/** 关闭/退出前尽力把待写盘的设置落盘（防抖窗口内关窗会丢最后一次改动） */
+function handleBeforeUnload() {
+  configStore.flushPersist()
+}
+
 onMounted(async () => {
   window.addEventListener("keydown", handleKeydown)
   window.addEventListener("resize", applyNarrowAutoCollapse)
+  window.addEventListener("beforeunload", handleBeforeUnload)
   applyNarrowAutoCollapse()
 
   // 引擎事件 -> store 的唯一映射（订阅时机见下）
@@ -642,6 +648,7 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown)
   window.removeEventListener("resize", applyNarrowAutoCollapse)
+  window.removeEventListener("beforeunload", handleBeforeUnload)
   unsubscribeEvents?.()
   unsubscribeMenu?.()
 })

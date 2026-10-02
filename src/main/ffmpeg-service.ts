@@ -1,5 +1,6 @@
 import { app } from "electron"
 import { execFileSync, execFile } from "node:child_process"
+import { randomUUID } from "node:crypto"
 import path from "node:path"
 import {
   collectInputFiles,
@@ -327,7 +328,9 @@ class DesktopTranscodeService {
         // 无需在此手工逐一映射。staged 状态显式传入，缺失数值由投影回退 undefined。
         const task = createPublicTaskSnapshot(
           {
-            id: `task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+            // 用 UUID 而非 Date.now()+随机后缀：并发探测时同一毫秒内的碰撞概率不为零，
+            // 而 id 是 task.progress/task.done 事件反查任务的唯一键，重复会串台。
+            id: `task_${randomUUID()}`,
             name: item.name,
             path: item.path,
             size: item.size || 0,
@@ -509,7 +512,23 @@ class DesktopTranscodeService {
       if (this.currentPlan?.tasks?.length > 0 && !this.currentPlan.previewCmd) {
         try {
           const firstTask = this.currentPlan.tasks[0]
-          const buildResult = createFFmpegArgs(firstTask, this.environment.buildPreviewHwPlan())
+          // 预计分层：走引擎能力级决策（候选链 + GPU 矩阵预筛），不做逐文件干跑。
+          // 传入首个任务的媒体信息，使 10bit/像素格式等参与同一套矩阵预筛。
+          const previewInfo = firstTask.info
+          // normalizeDesktopOptions 的 hwaccel 随 pickOptions 展开而来，静态类型里不可见
+          const previewOptions = normalized as { decodeMode?: string; hwaccel?: string }
+          const buildResult = createFFmpegArgs(
+            firstTask,
+            this.environment.buildPreviewHwPlan({
+              decodeMode: previewOptions.decodeMode,
+              hwaccel: previewOptions.hwaccel,
+              path: firstTask.path,
+              presetType: activePreset.type,
+              codec: previewInfo?.video?.format || "",
+              pixFmt: previewInfo?.video?.pixelFormat || "",
+              bitDepth: previewInfo?.video?.bitDepth,
+            }),
+          )
           const rawArgs = buildResult?.args ? buildResult.args.flat() : []
           if (rawArgs.length > 0 && firstTask.fileDstTemp && firstTask.fileDst) {
             const lastIdx = rawArgs.length - 1
