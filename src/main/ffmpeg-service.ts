@@ -16,6 +16,7 @@ import {
   normalizeDesktopOptions,
   presets,
   prepareFFmpegPlan,
+  resolveEntryHwPlan,
   runFFmpeg,
   scanDesktopInputFiles,
   setLogLevel,
@@ -40,11 +41,21 @@ import type {
   PublicPlanSnapshot,
   RunnerState,
   StageInputsResult,
+  TaskProbeResult,
 } from "../shared/contracts.js"
 
 /** 并发上限：probe 与转码并发共用进程/内存预算，超过后收益递减且易触发 OOM */
 const MAX_CONCURRENCY = 8
 const DEFAULT_CONCURRENCY = 1
+/**
+ * 扫描/计划阶段的并发（与编码 jobs **解耦**）。
+ *
+ * 计划阶段每个文件都要跑 ffprobe 与若干 fs 检查，瓶颈是进程启动（实测 ~58ms/次）
+ * 与杀软实时扫描，而非 CPU；实测 1000 文件 1→4 并发有 ~1.5x 收益、4→8 无增益。
+ * 此前直接复用 `jobs`，用户默认 jobs=1 时计划阶段被迫串行；而 jobs 是**编码**并发，
+ * 两者诉求不同（编码吃满 CPU/GPU，扫描只是等待进程返回），故独立取 4。
+ */
+const SCAN_CONCURRENCY = 4
 
 /**
  * 下列内部类型只声明桌面端**实际消费**的字段。
@@ -509,7 +520,8 @@ class DesktopTranscodeService {
         preset: activePreset,
         argv,
         mode: "plan",
-        concurrency: this.resolveConcurrency(normalized.jobs),
+        // 计划阶段并发与编码 jobs 解耦：扫描不占用编码并发预算（见 SCAN_CONCURRENCY）
+        concurrency: SCAN_CONCURRENCY,
         buildTaskDeps: {
           getMediaInfo: async (file: string, options?: { signal?: AbortSignal }) => {
             const canonical = path.resolve(file)
@@ -564,24 +576,8 @@ class DesktopTranscodeService {
               codecFamily: codecFamilyOfPreset(activePreset),
             }),
           )
-          const rawArgs = buildResult?.args ? buildResult.args.flat() : []
-          if (rawArgs.length > 0 && firstTask.fileDstTemp && firstTask.fileDst) {
-            const lastIdx = rawArgs.length - 1
-            if (rawArgs[lastIdx] === firstTask.fileDstTemp) {
-              rawArgs[lastIdx] = firstTask.fileDst
-            }
-          }
-          const flat = rawArgs
-            .map((arg: unknown) => {
-              const s = String(arg)
-              if (s.length === 0) return '""'
-              if (/[\s"']/.test(s)) {
-                return `"${s.replace(/"/g, '\\"')}"`
-              }
-              return s
-            })
-            .join(" ")
-          if (flat) this.currentPlan.previewCmd = `ffmpeg ${flat}`
+          const cmd = this.formatCmd(buildResult?.args, firstTask.fileDstTemp, firstTask.fileDst)
+          if (cmd) this.currentPlan.previewCmd = cmd
         } catch {
           // Keep empty string fallback
         }
@@ -604,6 +600,96 @@ class DesktopTranscodeService {
     } catch (error) {
       this.status = "IDLE"
       throw error
+    }
+  }
+
+  /**
+   * 把 createFFmpegArgs 的参数树渲染成 `ffmpeg ...` 命令串。
+   *
+   * 仅供「预计命令」（createPlan）与「实测命令」（probeTask）共用：末尾的临时产物
+   * 路径替换为最终产物，含空白/引号的参数加双引号。
+   */
+  private formatCmd(args: unknown, fileDstTemp?: unknown, fileDst?: unknown): string {
+    const raw: unknown[] = Array.isArray(args) ? args.flat() : []
+    if (raw.length > 0 && fileDstTemp && fileDst) {
+      const lastIdx = raw.length - 1
+      if (raw[lastIdx] === fileDstTemp) raw[lastIdx] = fileDst
+    }
+    const flat = raw
+      .map((arg) => {
+        const s = String(arg)
+        if (s.length === 0) return '""'
+        if (/[\s"']/.test(s)) {
+          return `"${s.replace(/"/g, '\\"')}"`
+        }
+        return s
+      })
+      .join(" ")
+    return flat ? `ffmpeg ${flat}` : ""
+  }
+
+  /**
+   * 手动「实测本机命令」：对本任务**真跑一次**分层探测
+   * （resolveEntryHwPlan → selectTier → probeLayer 干跑），返回与执行期同构的命令与命中层。
+   *
+   * 与 createPlan 的「预计命令」不同：预计只走能力级候选链 + GPU 矩阵预筛，不做逐文件
+   * 干跑；实测会执行 `-frames:v ... -f null -`。因此**只允许用户手动触发，绝不自动运行**。
+   *
+   * 复用任务已缓存的 task.info 与进程内 caps，不重新 ffprobe；探测结果顺带为真实执行
+   * 预热 probeCache。结果由渲染层按任务保存，不落盘、不持久化。
+   */
+  async probeTask(taskId: string): Promise<TaskProbeResult> {
+    if (!taskId) throw new Error("taskId is required")
+    if (this.status === "RUNNING" || this.status === "PLANNING" || this.status === "STOPPING") {
+      throw new Error("无法在扫描或转码期间实测：请等待当前任务结束")
+    }
+    const task = this.currentPlan?.tasks?.find((t) => t.id === taskId)
+    if (!task) throw new Error("Task not found in current plan")
+    const info = (task.info || this.stagedEntries.get(path.resolve(task.path))?.info || null) as
+      | MediaInfoPayload
+      | null
+    if (!info) throw new Error("任务元数据缺失，请重新扫描后再实测")
+
+    // 音频任务不涉及视频分层：直接返回占位结果（UI 侧亦置灰）
+    const presetType = (task.preset as { type?: string } | undefined)?.type
+    if (presetType === "audio" || !info.video) {
+      return {
+        taskId,
+        audio: true,
+        tier: "cpu",
+        degraded: false,
+        tried: ["cpu"],
+        reason: presetType === "audio" ? "audio preset" : "no video stream",
+        cmd: "",
+        probedAt: Date.now(),
+      }
+    }
+
+    // 确保硬件能力已探测（进程内缓存），与执行期同源、不重复探测
+    await this.environment.getSummary()
+    const entry = { ...task, info }
+    const plan = (await resolveEntryHwPlan(entry, {
+      caps: this.environment.getHardwareCapabilities(),
+      ffmpegPath: this.environment.getFfmpegPath(),
+    })) as { tier?: { name?: string }; degraded?: boolean; tried?: string[]; reason?: string }
+
+    let cmd = ""
+    try {
+      const buildResult = createFFmpegArgs(entry, plan)
+      cmd = this.formatCmd(buildResult?.args, task.fileDstTemp, task.fileDst)
+    } catch {
+      // 命令渲染失败不影响命中层结论
+    }
+
+    return {
+      taskId,
+      audio: false,
+      tier: plan?.tier?.name || "cpu",
+      degraded: plan?.degraded === true,
+      tried: Array.isArray(plan?.tried) ? plan.tried : [],
+      reason: plan?.reason || "",
+      cmd,
+      probedAt: Date.now(),
     }
   }
 

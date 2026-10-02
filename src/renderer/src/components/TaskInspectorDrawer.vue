@@ -29,21 +29,67 @@ const STATUS_TEXT: Record<string, string> = {
 const statusText = computed(() => STATUS_TEXT[task.value?.status || ""] || "等待中")
 
 /**
- * 命令来源：
+ * 命令来源（三者都不是最终命令，差异来源须在 UI 上标注）：
+ *  - "probe"    —— 用户**手动**点「实测」后，主进程对**本文件**真跑分层探测
+ *                  （与执行期同一套 selectTier/probeLayer 干跑）得到的**实际**命令；
+ *                  仅内存、不持久化，参数一改即随 STALE 失效；
  *  - "plan"     —— 扫描期由主进程按**能力级分层**生成的**预计**命令：走候选链
  *                  （resolvePreviewHwPlan）并复用 GPU 支持矩阵预筛，但不做逐文件
  *                  ffmpeg 干跑（`-frames:v ... -f null -`）。多数文件与真实执行一致；
  *                  个别文件（本身解不开、矩阵明确不支持、失败重试强制 cpu）可能降级，
  *                  故仍标注「预计」而非「实际」；
  *  - "estimate" —— 尚未扫描时，本组件按当前设置拼接的**预览**命令。
- *  两者都不是最终命令，差异来源须在 UI 上标注。
  */
-const cmdSource = computed<"plan" | "estimate">(() =>
-  plan.planSnapshot?.previewCmd ? "plan" : "estimate"
+const cmdSource = computed<"probe" | "plan" | "estimate">(() => {
+  if (task.value?.probeCmd) return "probe"
+  return plan.planSnapshot?.previewCmd ? "plan" : "estimate"
+})
+
+const cmdLabel = computed(() =>
+  cmdSource.value === "probe" ? "实测" : cmdSource.value === "plan" ? "预计" : "预览"
 )
+
+// 实测：仅手动触发；扫描/转码进行中、音频任务或尚未扫描时不可用
+const probing = ref(false)
+const probeError = ref("")
+const isBusy = computed(() =>
+  ["RUNNING", "PLANNING", "STOPPING"].includes(plan.status)
+)
+const canProbe = computed(
+  () => !!plan.planSnapshot && !probing.value && !isBusy.value && !!task.value?.videoCodec
+)
+const probeDisabledReason = computed(() => {
+  if (!task.value?.videoCodec) return "音频任务不涉及视频分层，无需实测"
+  if (isBusy.value) return "扫描或转码进行中，暂不可实测"
+  if (!plan.planSnapshot) return "请先扫描后再实测"
+  return ""
+})
+
+async function runProbe() {
+  const t = task.value
+  if (!t || !canProbe.value) return
+  probing.value = true
+  probeError.value = ""
+  try {
+    const res = await window.api.probeTask(t.id)
+    plan.setProbeResult(res)
+    if (res.audio) probeError.value = "音频任务不涉及视频分层"
+  } catch (err) {
+    probeError.value = err instanceof Error ? err.message : String(err)
+    logStore.append({
+      level: "ERROR",
+      message: `实测本机命令失败：${probeError.value}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+  } finally {
+    probing.value = false
+  }
+}
 
 const cmdString = computed(() => {
   if (!task.value) return ""
+  // 实测结果优先：它已按本任务的输出路径生成，无需再做路径替换
+  if (task.value.probeCmd) return task.value.probeCmd
   if (plan.planSnapshot?.previewCmd) {
     // 统一走 store：按 path 反查基准任务，避免移除过首行后替换失配
     return plan.previewCmdFor(task.value)
@@ -317,21 +363,36 @@ function startResizing(e: MouseEvent) {
         <!-- FFmpeg 命令行推演卡片 -->
         <div class="insp-card">
           <div class="insp-card-title">
-            <span>FFmpeg 命令（{{ cmdSource === "plan" ? "预计" : "预览" }}）</span>
-            <button class="btn btn-sm" data-testid="btn-copy-cmd" @click="copyCmd">
-              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-              {{ copiedCmd ? '已复制' : '复制' }}
-            </button>
+            <span>FFmpeg 命令（{{ cmdLabel }}）</span>
+            <div class="cmd-actions">
+              <button
+                class="btn btn-sm"
+                data-testid="btn-probe-cmd"
+                :disabled="!canProbe"
+                :title="probeDisabledReason"
+                @click="runProbe"
+              >
+                {{ probing ? '实测中…' : '实测' }}
+              </button>
+              <button class="btn btn-sm" data-testid="btn-copy-cmd" @click="copyCmd">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                {{ copiedCmd ? '已复制' : '复制' }}
+              </button>
+            </div>
           </div>
-          <div v-if="cmdSource === 'plan'" class="cmd-warn" data-testid="cmd-plan-warn">
-            预计命令：按本机硬件能力推断的分层（已套用 GPU 支持矩阵预筛），未对文件逐个干跑探测。真实执行时该文件若解不开或失败重试，可能降级为软件编码。
+          <div v-if="cmdSource === 'probe'" class="cmd-warn" data-testid="cmd-probe-warn">
+            实测命令（本机探测）：已对本文件真跑分层探测，命中层「{{ task.probeTier }}」{{ task.probeDegraded ? '（有降级）' : '' }}，与真实执行使用同一套分层决策。试跑只解码前若干帧、不产出文件。
+          </div>
+          <div v-else-if="cmdSource === 'plan'" class="cmd-warn" data-testid="cmd-plan-warn">
+            预计命令：按本机硬件能力推断的分层（已套用 GPU 支持矩阵预筛），未对文件逐个干跑探测。真实执行时该文件若解不开或失败重试，可能降级为软件编码。可点「实测」对当前文件真跑一次探测。
           </div>
           <div v-else class="cmd-warn" data-testid="cmd-estimate-warn">
             尚未扫描：这里按当前设置预览，与执行时按文件探测得出的命令无关。点击「扫描」后可看到按本机能力推断的预计命令。
           </div>
+          <div v-if="probeError" class="cmd-warn error" data-testid="cmd-probe-error">{{ probeError }}</div>
           <div class="cmd-box" data-testid="insp-cmd-box" v-html="highlightedCmd"></div>
         </div>
 
@@ -548,6 +609,16 @@ function startResizing(e: MouseEvent) {
   height: 12px;
 }
 
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.cmd-actions {
+  display: flex;
+  gap: 6px;
+}
+
 .cmd-warn {
   background: var(--warning-soft);
   color: var(--warning);
@@ -556,6 +627,12 @@ function startResizing(e: MouseEvent) {
   padding: 6px 8px;
   font-size: 11px;
   line-height: 1.5;
+}
+
+.cmd-warn.error {
+  background: var(--error-soft);
+  color: var(--error);
+  border-color: rgba(248, 81, 73, 0.35);
 }
 
 .cmd-box {

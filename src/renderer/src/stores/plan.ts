@@ -1,6 +1,12 @@
 import { defineStore } from "pinia"
 import { ref, shallowRef, computed } from "vue"
-import type { PublicPlanSnapshot, PlanTask, RunnerState, TaskStatus } from "../../../shared/contracts"
+import type {
+  PublicPlanSnapshot,
+  PlanTask,
+  RunnerState,
+  TaskProbeResult,
+  TaskStatus,
+} from "../../../shared/contracts"
 
 // RunnerState 的唯一事实源在 shared/contracts.ts；渲染层不再各自声明同名类型，
 // 否则主进程新增状态（如 STALE）时两边会静默漂移。
@@ -220,7 +226,50 @@ export const usePlanStore = defineStore("plan", () => {
     }
   }
 
+  /**
+   * 手动「实测」结果按任务保存（仅内存，不持久化）。
+   *
+   * 实测结果与触发它的那套参数强绑定：参数一改，实测命令即失效。故 markStale /
+   * applyPendingStale 会调用 clearProbeResults() 一并清空，避免展示与当前设置不符的
+   * 「实测」命令造成误导；重建计划（setPlan）替换 tasks 时也会自然丢弃。
+   */
+  function setProbeResult(result: TaskProbeResult) {
+    const list = [...tasks.value]
+    const idx = list.findIndex((t) => t.id === result.taskId)
+    if (idx < 0) return
+    list[idx] = {
+      ...list[idx],
+      probeCmd: result.cmd || undefined,
+      probeTier: result.tier,
+      probeTried: result.tried,
+      probeDegraded: result.degraded,
+      probeReason: result.reason,
+      probeAt: result.probedAt,
+    }
+    tasks.value = list
+  }
+
+  /** 清空全部任务的实测结果（参数变更 / 计划失效时调用） */
+  function clearProbeResults() {
+    if (!tasks.value.some((t) => t.probeAt)) return
+    tasks.value = tasks.value.map((t) =>
+      t.probeAt
+        ? {
+            ...t,
+            probeCmd: undefined,
+            probeTier: undefined,
+            probeTried: undefined,
+            probeDegraded: undefined,
+            probeReason: undefined,
+            probeAt: undefined,
+          }
+        : t,
+    )
+  }
+
   function markStale() {
+    // 参数已变 → 实测结果不再成立，先清空再标失效
+    clearProbeResults()
     // 终态（COMPLETED/FAILED/STOPPED）之后配置变化同样必须标 STALE：
     // startExecution 只在 STALE / hasStaged / 无 planSnapshot 时才重推演，
     // 若终态下 markStale 是 no-op，旧计划里已确认的 deleteSourceFiles/
@@ -242,6 +291,7 @@ export const usePlanStore = defineStore("plan", () => {
     if (!pendingStale.value) return
     pendingStale.value = false
     if (tasks.value.length > 0) {
+      clearProbeResults()
       status.value = "STALE"
     }
   }
@@ -390,6 +440,8 @@ export const usePlanStore = defineStore("plan", () => {
     setPlan,
     markStale,
     applyPendingStale,
+    setProbeResult,
+    clearProbeResults,
     previewCmdFor,
     toggleTask,
     toggleAll,

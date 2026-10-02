@@ -488,6 +488,11 @@ handleTrusted(IPC_CHANNELS.PLAN_CREATE, (body: Record<string, unknown>) => {
   }
   return transcodeService.createPlan(body)
 })
+// 手动「实测本机命令」：按需对单个任务真跑分层探测（绝不自动触发）
+handleTrusted(IPC_CHANNELS.PLAN_PROBE_TASK, (taskId: unknown) => {
+  if (typeof taskId !== "string") throw new Error("taskId must be a string")
+  return transcodeService.probeTask(taskId)
+})
 handleTrusted(IPC_CHANNELS.EXECUTION_START, async (taskIds: unknown, options?: unknown) => {
   if (taskIds !== undefined && (!Array.isArray(taskIds) || taskIds.some((id) => typeof id !== "string"))) {
     throw new Error("taskIds must be an array of strings")

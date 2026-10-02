@@ -189,6 +189,31 @@ export interface PlanTask {
   audioBitrate?: number
   rawMetadata?: string
   targetSummary?: MediaTargetSummary
+  /**
+   * 手动「实测本机命令」的结果（仅内存，不持久化）。
+   * 与 cmdPreview（扫描期按能力级推断的**预计**命令）不同，它来自逐文件真跑
+   * ffmpeg 干跑探测选出的**实际**层，标注为「实测」。
+   */
+  probeCmd?: string
+  probeTier?: string
+  probeTried?: string[]
+  probeDegraded?: boolean
+  probeReason?: string
+  probeAt?: number
+}
+
+/** 「实测本机命令」IPC 返回：命中层 + 与真实执行同构的命令 */
+export interface TaskProbeResult {
+  taskId: string
+  /** 音频任务不做视频分层，UI 置灰不再探测 */
+  audio: boolean
+  tier: string
+  degraded: boolean
+  tried: string[]
+  reason: string
+  /** 完整命令串（已按当前任务的输出路径渲染）；audio 时为空 */
+  cmd: string
+  probedAt: number
 }
 
 export interface StageInputsResult {
@@ -289,6 +314,8 @@ export interface DesktopApi {
   getSettings(): Promise<AppSettings | null>
   saveSettings(settings: AppSettings): Promise<AppSettings>
   createPlan(body: Record<string, unknown>): Promise<PublicPlanSnapshot>
+  /** 手动实测本机命令：对指定任务真跑一次分层探测并返回实际命令（不自动调用） */
+  probeTask(taskId: string): Promise<TaskProbeResult>
   startExecution(taskIds?: string[], options?: ExecutionOptions): Promise<{ runId: string }>
   stopExecution(): Promise<{ ok: boolean; message?: string }>
   getExecutionStatus(): Promise<ExecutionSnapshot>

@@ -31,6 +31,7 @@ export const IPC_CHANNELS = {
   STAGE_CLEAR: "ffmpeg:stage-clear",
   STAGE_REMOVE: "ffmpeg:stage-remove",
   PLAN_CREATE: "plan:create",
+  PLAN_PROBE_TASK: "plan:probe-task",
   EXECUTION_START: "execution:start",
   EXECUTION_STOP: "execution:stop",
   EXECUTION_GET_STATUS: "execution:get-status",

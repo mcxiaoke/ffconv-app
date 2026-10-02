@@ -48,6 +48,9 @@ const api: DesktopApi = {
   createPlan(body) {
     return ipcRenderer.invoke(IPC_CHANNELS.PLAN_CREATE, safeClone(body))
   },
+  probeTask(taskId) {
+    return ipcRenderer.invoke(IPC_CHANNELS.PLAN_PROBE_TASK, String(taskId ?? ""))
+  },
   startExecution(taskIds, options) {
     return ipcRenderer.invoke(IPC_CHANNELS.EXECUTION_START, safeClone(taskIds), safeClone(options))
   },

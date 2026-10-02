@@ -80,6 +80,16 @@ export class FfmpegEnvironment {
     return this.ffmpegPath
   }
 
+  /**
+   * 硬件能力探测结果（进程内缓存；未探测时为 null）。
+   *
+   * 宿主「实测本机命令」需要把同一份 caps 交给引擎的 selectTier，
+   * 避免重复探测、也保证与执行期结论同源。调用方须先 await getSummary()。
+   */
+  getHardwareCapabilities(): HardwareCapabilities | null {
+    return this.hardware
+  }
+
   async setCustomToolPaths(paths: {
     ffmpeg?: string
     ffprobe?: string
