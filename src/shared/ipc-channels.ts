@@ -39,6 +39,7 @@ export const IPC_CHANNELS = {
   SYSTEM_OPEN_PATH: "system:open-path",
   SYSTEM_NOTIFY: "system:notify",
   SYSTEM_COPY_TEXT: "system:copy-text",
+  SYSTEM_SAVE_LOG: "system:save-log",
   ENV_SET_CUSTOM_PATHS: "env:set-custom-paths",
   SETTINGS_GET: "settings:get",
   SETTINGS_SET: "settings:set",

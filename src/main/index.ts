@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, session, shell, type IpcMainInvokeEvent } from "electron"
 import { appendFileSync, existsSync, mkdirSync } from "node:fs"
+import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { transcodeService } from "./ffmpeg-service.js"
@@ -109,31 +110,39 @@ function startupLog(message: string) {
  * 直接跳过——渲染层在 onMounted 最开始就订阅引擎事件，早于 fetchPresets/fetchEnv，
  * 因此加载完成后到达的环境探测日志不会丢。
  */
-transcodeService.registerLogSink((record) => {
-  const level = String(record?.level || "INFO").toUpperCase()
-  if (level !== "INFO" && level !== "WARN" && level !== "ERROR") return
+/** 把一条日志转发到渲染层「运行日志」面板（仅 INFO/WARN/ERROR 会进入面板） */
+function forwardLogToPanel(level: unknown, tag: unknown, message: unknown): void {
+  const normalized = String(level || "INFO").toUpperCase()
+  if (normalized !== "INFO" && normalized !== "WARN" && normalized !== "ERROR") return
   const window = mainWindow
   if (!window || window.isDestroyed() || window.webContents.isLoading()) return
-  const message = record.tag ? `[${record.tag}] ${record.message}` : String(record.message || "")
+  const text = String(message ?? "")
   window.webContents.send(
     IPC_CHANNELS.EXECUTION_EVENT,
     toSerializable({
       type: "task.log",
-      level,
-      message,
+      level: normalized,
+      message: typeof tag === "string" && tag ? `[${tag}] ${text}` : text,
       timestamp: new Date().toLocaleTimeString(),
     }),
   )
+}
+
+transcodeService.registerLogSink((record) => {
+  forwardLogToPanel(record?.level, record?.tag, record?.message)
 })
 
 process.on("uncaughtException", (error) => {
   startupLog(`uncaughtException: ${error.stack || error}`)
   console.error(error)
+  // 主进程自身异常此前只在终端可见，界面无痕；一并送进日志面板
+  forwardLogToPanel("ERROR", "main", `uncaughtException: ${error?.stack || error}`)
 })
 
 process.on("unhandledRejection", (error) => {
   startupLog(`unhandledRejection: ${String(error)}`)
   console.error(error)
+  forwardLogToPanel("ERROR", "main", `unhandledRejection: ${String(error)}`)
 })
 
 function isTrustedSender(event: IpcMainInvokeEvent) {
@@ -452,12 +461,15 @@ handleTrusted(IPC_CHANNELS.ENV_SET_CUSTOM_PATHS, async (payload: unknown) => {
   })
 })
 handleTrusted(IPC_CHANNELS.SETTINGS_GET, () => getSettingsStore().load())
-handleTrusted(IPC_CHANNELS.SETTINGS_SET, (payload: unknown) => {
+handleTrusted(IPC_CHANNELS.SETTINGS_SET, async (payload: unknown) => {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new Error("settings payload must be a plain object")
   }
   // 白名单校验与原子写都在 SettingsStore 内完成，渲染层传什么都无法写出未知字段
-  return getSettingsStore().save(payload)
+  const merged = await getSettingsStore().save(payload)
+  // 日志级别由主进程持有并立即生效（引擎侧两条日志路径统一按此过滤）
+  transcodeService.setLogLevel(merged.logLevel)
+  return merged
 })
 handleTrusted(IPC_CHANNELS.STAGE_INPUTS, async (paths: unknown) => {
   if (!Array.isArray(paths)) throw new Error("paths must be an array of strings")
@@ -510,6 +522,18 @@ handleTrusted(IPC_CHANNELS.SYSTEM_COPY_TEXT, (text: unknown) => {
   }
   return writeClipboardText(text)
 })
+// 保存面板日志到文件：落应用日志目录（与菜单「打开日志目录」一致），文件名带时间戳。
+// 长度上限与复制一致（日志可能很大），避免渲染层传入超长内容。
+handleTrusted(IPC_CHANNELS.SYSTEM_SAVE_LOG, async (text: unknown) => {
+  if (typeof text !== "string") throw new Error("log text must be a string")
+  const dir = app.getPath("logs")
+  await mkdir(dir, { recursive: true })
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+  const filePath = path.join(dir, `mediac-desktop-${stamp}.log`)
+  await writeFile(filePath, text.slice(0, 20_000_000), "utf8")
+  startupLog(`log saved: ${filePath}`)
+  return { path: filePath }
+})
 handleTrusted(IPC_CHANNELS.SYSTEM_NOTIFY, async (payload: unknown) => {
   const p = payload as { title?: string; body?: string }
   if (!p || typeof p !== "object") throw new Error("Invalid notify payload")
@@ -547,6 +571,11 @@ handleTrusted(
 app.whenReady()
   .then(async () => {
     startupLog("app ready")
+    // 引擎日志落盘到应用日志目录（与菜单「打开日志目录」一致，此前在系统临时目录、
+    // 用户根本找不到）；随后按用户设置应用日志级别（默认 info）。
+    transcodeService.setLogRootDir(path.join(app.getPath("logs"), "engine"))
+    const savedSettings = await getSettingsStore().load()
+    if (savedSettings) transcodeService.setLogLevel(savedSettings.logLevel)
     await transcodeService.initialize()
     createWindow()
     session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {

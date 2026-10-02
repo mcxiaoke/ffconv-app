@@ -78,6 +78,10 @@ const api: DesktopApi = {
     // 改走 IPC 交主进程写入。
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_COPY_TEXT, String(text ?? ""))
   },
+  saveLog(text) {
+    // 保存一份日志到磁盘由主进程完成（渲染层无文件系统权限，也不应知道落点）
+    return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_SAVE_LOG, String(text ?? ""))
+  },
   notify(title, body) {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_NOTIFY, safeClone({ title, body }))
   },

@@ -245,6 +245,9 @@ export interface PersistedAdv {
   strict: boolean
 }
 
+/** 引擎日志级别（设置面板可调；默认 info） */
+export type LogLevelName = "trace" | "debug" | "info" | "warn" | "error" | "silent"
+
 /** 可在重启后恢复的用户设置（存 userData/settings.json） */
 export interface AppSettings {
   preset: string
@@ -256,6 +259,8 @@ export interface AppSettings {
   suffix: string
   tune: PersistedTune
   adv: PersistedAdv
+  /** 引擎/界面日志级别：默认 info（引擎侧两条日志路径统一按此过滤） */
+  logLevel: LogLevelName
 }
 
 export interface ExecutionOptions {
@@ -291,6 +296,8 @@ export interface DesktopApi {
   showInFolder(fullPath: string): Promise<void>
   openPath(fullPath: string): Promise<string>
   copyText(text: string): Promise<boolean>
+  /** 把面板日志内容保存成文件；返回落盘路径，失败返回 null */
+  saveLog(text: string): Promise<{ path: string } | null>
   notify(title: string, body: string): Promise<void>
   onMenuAction(callback: (action: string) => void): () => void
 }

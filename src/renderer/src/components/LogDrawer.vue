@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from "vue"
 import { useLogStore } from "../stores/log"
+import { useToast } from "../composables/useToast"
 
 const logStore = useLogStore()
+const toast = useToast()
 const bodyRef = ref<HTMLElement | null>(null)
 
 // 默认 680px，支持读取上次拖拽偏好
@@ -101,6 +103,30 @@ async function copyAll() {
     copied.value = false
   }, 2000)
 }
+
+/** 保存日志到文件（由主进程落盘到应用日志目录，渲染层不接触文件系统） */
+const saved = ref(false)
+async function saveLogFile() {
+  // 保存**全部**日志（含未展示的 DEBUG）：导出的目的是排查问题，不应受当前筛选影响
+  const text =
+    logStore.logs.map((l) => `[${l.ts}] [${l.level}] ${l.text}`).join("\n") || "No logs"
+  try {
+    const res = await window.api?.saveLog?.(text)
+    if (res?.path) {
+      // 路径较长且用户可能要用它去打开文件，给足停留时间
+      toast.push(`日志已保存：${res.path}`, "success", 8000)
+      saved.value = true
+      setTimeout(() => {
+        saved.value = false
+      }, 2000)
+      return
+    }
+    toast.push("保存日志失败", "error")
+  } catch (err) {
+    console.error("saveLog failed:", err)
+    toast.push(`保存日志失败：${err instanceof Error ? err.message : String(err)}`, "error")
+  }
+}
 </script>
 
 <template>
@@ -155,6 +181,14 @@ async function copyAll() {
           </button>
           <button class="btn btn-sm" data-testid="btn-copy-log" @click="copyAll">
             {{ copied ? '已复制' : '复制' }}
+          </button>
+          <button
+            class="btn btn-sm"
+            data-testid="btn-save-log"
+            title="把全部日志保存到应用日志目录（含未展示的 DEBUG）"
+            @click="saveLogFile"
+          >
+            {{ saved ? '已保存' : '保存' }}
           </button>
           <button class="btn btn-sm" @click="logStore.clearLogs">清空</button>
           <button class="close-btn" data-testid="btn-close-log" @click="close">✕</button>

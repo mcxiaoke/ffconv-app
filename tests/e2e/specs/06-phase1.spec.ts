@@ -317,3 +317,26 @@ test.describe("Phase1 - 引擎日志进入运行日志面板", () => {
     await expect(logDrawer).toContainText("[hwdetect]", { timeout: 30000 })
   })
 })
+
+test.describe("Phase1 - 日志级别与导出", () => {
+  test("设置面板提供日志级别选择器，默认 info", async ({ appWindow }) => {
+    await appWindow.locator('[data-testid="btn-open-settings"]').click()
+    const levelSelect = appWindow.locator('[data-testid="select-log-level"]')
+    await expect(levelSelect).toBeVisible()
+    await expect(levelSelect).toHaveValue("info")
+    // 弹窗无 Esc 处理，点遮罩空白处关闭
+    await appWindow.locator('[data-testid="settings-modal-mask"]').click({ position: { x: 5, y: 5 } })
+    await expect(appWindow.locator('[data-testid="settings-modal"]')).not.toBeVisible()
+  })
+
+  test("日志抽屉可把日志保存到文件（主进程落盘并回传路径）", async ({ appWindow }) => {
+    await appWindow.locator('[data-testid="btn-open-log"]').click()
+    await expect(appWindow.locator('[data-testid="log-drawer"]')).toBeVisible()
+
+    await appWindow.locator('[data-testid="btn-save-log"]').click()
+    // 主进程写文件成功后给出 toast（含落盘路径），失败会提示失败
+    await expect(appWindow.locator('[data-testid="toast-host"]')).toContainText("日志已保存", {
+      timeout: 20000,
+    })
+  })
+})

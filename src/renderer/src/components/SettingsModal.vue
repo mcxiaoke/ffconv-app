@@ -325,6 +325,30 @@ function handleDeleteSourceToggle() {
             </div>
           </div>
         </div>
+
+        <!-- 日志级别 -->
+        <div class="set-row">
+          <span class="lbl">日志</span>
+          <div class="set-box">
+            <div class="field">
+              <label class="sub-lbl">
+                日志级别
+                <span class="hint">同时作用于引擎与界面日志</span>
+              </label>
+              <select v-model="configStore.logLevel" class="select" data-testid="select-log-level">
+                <option value="trace">trace（最详细）</option>
+                <option value="debug">debug</option>
+                <option value="info">info（默认）</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+                <option value="silent">silent（关闭日志）</option>
+              </select>
+            </div>
+            <div class="tool-hint">
+              info 及以上会写入日志文件；debug / trace 仅用于排查问题
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-foot">

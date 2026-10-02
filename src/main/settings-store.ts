@@ -18,6 +18,7 @@ const MAX_STRING_LEN = 4096
 const HWACCELS = new Set(["auto", "cuda", "qsv", "amf", "d3d11va", "cpu"])
 const DECODE_MODES = new Set(["auto", "gpu", "cpu"])
 const OUTPUT_MODES = new Set(["tree", "dir", "file"])
+const LOG_LEVELS = new Set(["trace", "debug", "info", "warn", "error", "silent"])
 
 function defaultTune(): PersistedTune {
   return {
@@ -53,6 +54,8 @@ export function defaultSettings(): AppSettings {
     suffix: "",
     tune: defaultTune(),
     adv: defaultAdv(),
+    // 默认 INFO：引擎此前实际跑在 loglevel 的默认 WARN 上，INFO 诊断全被丢弃
+    logLevel: "info",
   }
 }
 
@@ -118,6 +121,7 @@ export function sanitizeSettings(raw: unknown, base: AppSettings = defaultSettin
     suffix: asString(r.suffix, base.suffix),
     tune: sanitizeTune(r.tune, base.tune),
     adv: sanitizeAdv(r.adv, base.adv),
+    logLevel: asEnum(r.logLevel, LOG_LEVELS, base.logLevel),
   }
 }
 

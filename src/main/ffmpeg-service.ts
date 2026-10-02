@@ -11,12 +11,15 @@ import {
   createPublicPlanSnapshot,
   createPublicTaskSnapshot,
   deleteCompletedSources,
+  getLogLevelName,
   getMediaInfo,
   normalizeDesktopOptions,
   presets,
   prepareFFmpegPlan,
   runFFmpeg,
   scanDesktopInputFiles,
+  setLogLevel,
+  setLogRootDir,
   toLegacyArgvOptions,
 } from "../../core/transcode/index.js"
 import { FfmpegEnvironment } from "./ffmpeg-environment.js"
@@ -153,6 +156,21 @@ class DesktopTranscodeService {
    */
   registerLogSink(sink: (record: EngineLogRecord) => void): () => void {
     return addLogSink(sink)
+  }
+
+  /** 设置引擎日志级别（"trace"|"debug"|"info"|"warn"|"error"|"silent"） */
+  setLogLevel(level: string): boolean {
+    return setLogLevel(level)
+  }
+
+  /** 读取当前引擎日志级别名称（如 "INFO"） */
+  getLogLevelName(): string {
+    return getLogLevelName()
+  }
+
+  /** 指定引擎日志文件根目录（宿主传入应用日志目录，使菜单「打开日志目录」可见） */
+  setLogRootDir(dir: string): boolean {
+    return setLogRootDir(dir)
   }
 
   constructor() {

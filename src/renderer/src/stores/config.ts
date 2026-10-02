@@ -1,6 +1,6 @@
 import { defineStore } from "pinia"
 import { ref, computed, watch, nextTick } from "vue"
-import type { AppSettings } from "../../../shared/contracts"
+import type { AppSettings, LogLevelName } from "../../../shared/contracts"
 
 export interface TuneConfig {
   dimension: number
@@ -31,6 +31,8 @@ export const useConfigStore = defineStore("config", () => {
   const prefix = ref("")
   const suffix = ref("")
   const preset = ref("hevc_2k")
+  /** 引擎/界面日志级别（默认 info；由主进程应用到引擎的两条日志路径） */
+  const logLevel = ref<LogLevelName>("info")
 
   function setOutputBesideSource(val: boolean) {
     outputBesideSource.value = val
@@ -212,6 +214,7 @@ export const useConfigStore = defineStore("config", () => {
         anime: adv.value.anime,
         strict: adv.value.strict,
       },
+      logLevel: logLevel.value,
     }
   }
 
@@ -226,6 +229,7 @@ export const useConfigStore = defineStore("config", () => {
     outputDir.value = s.outputDir
     savedCustomOutputDir.value = s.savedCustomOutputDir || s.outputDir
     outputBesideSource.value = s.outputBesideSource
+    logLevel.value = s.logLevel || logLevel.value
   }
 
   /** 启动时恢复磁盘设置；waiting nextTick 是为了让本次赋值触发的 watcher 先跑完，
@@ -276,7 +280,7 @@ export const useConfigStore = defineStore("config", () => {
   }
 
   watch(
-    [preset, outputDir, outputBesideSource, savedCustomOutputDir, outputMode, prefix, suffix, tune, adv],
+    [preset, outputDir, outputBesideSource, savedCustomOutputDir, outputMode, prefix, suffix, tune, adv, logLevel],
     schedulePersist,
     { deep: true }
   )
@@ -297,6 +301,7 @@ export const useConfigStore = defineStore("config", () => {
     prefix,
     suffix,
     preset,
+    logLevel,
     tune,
     adv,
     isDimensionDirty,

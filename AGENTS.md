@@ -51,7 +51,12 @@ npm run package:win  # build + electron-builder（nsis/portable/zip）→ releas
 
 - 引擎侧消息用 `core/lib/i18n.js` 的 `t("key", { param: value })` 中英双语，
   自动检测系统语言；新增引擎消息须同时补两种语言。
-- 引擎日志统一经 `core/lib/debug.js`（loglevel + prefix）。
+- 引擎日志统一经 `core/lib/debug.js`。注意它有**两条并行路径**且必须同等对待：
+  `log.info/warn/error/debug`（loglevel）与 `logInfo/logWarn/logError/logTask/…`
+  （`logWithTag` 家族，直接 console.log）——两者共用同一 `activeLevel`
+  （默认 INFO，经 facade 的 `setLogLevel` 调整，设置面板可改），并都会落盘 +
+  汇聚给宿主的 `addLogSink`（Electron 主进程借此接入界面日志面板）。
+  引擎日志根目录默认在系统临时目录，宿主经 `setLogRootDir` 指定为应用日志目录。
 
 ## 测试
 

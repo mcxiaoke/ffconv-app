@@ -78,7 +78,68 @@ const CATEGORY_LEVEL = {
     TASK: "INFO",
 }
 
+// ---------------------------------------------------------------------------
+// 全局日志级别（两条路径共用）
+// ---------------------------------------------------------------------------
+// 此前两套机制各管各的：loglevel 受 setLevel 控制（默认 WARN，导致引擎里所有
+// `log.info/debug` 诊断被静默丢弃），而 logWithTag 家族完全不受控（永远输出）。
+// 现在统一到 activeLevel：默认 INFO，宿主可通过 setLogLevel 更改（设置面板可调）。
+//
+// ⚠️ 数值与文件后部的 `LogLevel` 常量一致（loglevel 的 TRACE..SILENT），
+//    此处提前声明是为了赶在 `setupLogger()` 之前可用。
+const LEVEL_BY_NAME = { TRACE: 0, DEBUG: 1, INFO: 2, WARN: 3, ERROR: 4, SILENT: 5 }
+let activeLevel = LEVEL_BY_NAME.INFO
+
+/**
+ * 日志根目录。
+ *
+ * 默认落在系统临时目录（引擎独立运行时的合理默认），但**宿主可覆盖**：
+ * Electron 主进程应改为应用日志目录，否则界面上「打开日志目录」看不到引擎日志。
+ * ⚠️ 必须在 `setupLogger()` 之前声明：该方法会调用 getLogRootDir() 并 mkdirs。
+ */
+let logRootDir = path.join(os.tmpdir(), "mediac")
+
+/** 规范化级别入参（名称或数值）；非法返回 null */
+function normalizeLevel(level) {
+    if (typeof level === "number" && Number.isFinite(level)) {
+        return Math.min(LEVEL_BY_NAME.SILENT, Math.max(0, Math.round(level)))
+    }
+    const key = String(level ?? "").trim().toUpperCase()
+    return key in LEVEL_BY_NAME ? LEVEL_BY_NAME[key] : null
+}
+
+/** 该级别在当前设置下是否应输出（两条路径统一判定） */
+function shouldLog(level) {
+    const value = LEVEL_BY_NAME[String(level).toUpperCase()]
+    return value === undefined ? true : value >= activeLevel
+}
+
+/**
+ * 设置全局日志级别（名称或数值，如 "info" / 2）。
+ * 同时作用于 loglevel 路径与 logWithTag 家族。
+ * @returns {boolean} 是否设置成功（非法值返回 false，且不改变当前级别）
+ */
+export function setLogLevel(level) {
+    const normalized = normalizeLevel(level)
+    if (normalized === null) return false
+    activeLevel = normalized
+    log.setLevel(normalized)
+    return true
+}
+
+/** 当前日志级别数值 */
+export function getLogLevel() {
+    return activeLevel
+}
+
+/** 当前日志级别名称（如 "INFO"），供界面展示与持久化 */
+export function getLogLevelName() {
+    return Object.keys(LEVEL_BY_NAME).find((k) => LEVEL_BY_NAME[k] === activeLevel) || "INFO"
+}
+
 setupLogger()
+// 默认 INFO：此前 loglevel 默认 WARN，引擎的 INFO 诊断全部被丢弃
+log.setLevel(activeLevel)
 
 let loggerName = ""
 const nowDateStr = dayjs().format("YYYYMMDDHHmmss")
@@ -152,11 +213,11 @@ function applyCustomPlugin(logger, options = {}) {
             const sinkMessage = joined.startsWith(`${levelToken} `)
                 ? joined.slice(levelToken.length + 1)
                 : joined
-            emitLogSink(
-                levelToken,
-                typeof loggerName === "string" ? loggerName : "",
-                sinkMessage,
-            )
+            const sinkTag = typeof loggerName === "string" ? loggerName : ""
+            emitLogSink(levelToken, sinkTag, sinkMessage)
+            // 与 logWithTag 家族一致地落盘：否则 loglevel 路径的 INFO/WARN
+            // （如 ffmpeg_plan 的逐条元数据、file.js 的扫描统计）仍然只存在于 stdout
+            fileLog(sinkMessage, sinkTag || "engine")
         }
     }
 
@@ -187,13 +248,31 @@ function setupLogger() {
 }
 
 /**
- * 获取日志根目录路径
- * 返回操作系统临时目录下的mediac子目录
+ * 设置日志根目录（宿主用，如 Electron 主进程传入 app.getPath("logs")）
  *
+ * 引擎默认写在系统临时目录（用户找不到、且可能被系统清理），宿主应改为应用日志目录。
+ *
+ * @param {string} dir 绝对路径；非法入参忽略
+ * @returns {boolean} 是否生效
+ */
+export function setLogRootDir(dir) {
+    if (typeof dir !== "string" || dir.trim().length === 0) return false
+    logRootDir = path.resolve(dir)
+    try {
+        fs.mkdirsSync(logRootDir)
+    } catch {
+        // 目录不可创建时保留原值之外不做处理：日志主流程不允许因落盘路径失败而中断
+        return false
+    }
+    return true
+}
+
+/**
+ * 获取日志根目录路径
  * @returns {string} 日志根目录路径
  */
 function getLogRootDir() {
-    return path.join(os.tmpdir(), "mediac")
+    return logRootDir
 }
 
 const fileLogCache = new Map()
@@ -440,13 +519,19 @@ function formatLogCategory(category) {
 }
 
 export function logWithTag(tag, category, ...args) {
+    const key = typeof category === "string" ? category.toUpperCase() : category?.prefix
+    const level = CATEGORY_LEVEL[key] || "INFO"
+    // 统一级别判定：本家族此前完全不受 setLevel 控制，永远输出（见文件顶部说明）
+    if (!shouldLog(level)) return
     const tagStr = formatLogTag(tag)
     const catStr = formatLogCategory(category)
     const prefix = [tagStr, catStr].filter(Boolean).join(" ")
     console.log(prefix, ...args.map((a) => (typeof a === "object" ? a : String(a))))
-    // 本家族绕过 loglevel，必须在此单独汇聚（见文件顶部说明）
-    const key = typeof category === "string" ? category.toUpperCase() : category?.prefix
-    emitLogSink(CATEGORY_LEVEL[key] || "INFO", typeof tag === "string" ? tag : "", formatSinkArgs(args))
+    const text = formatSinkArgs(args)
+    // 汇聚到宿主（Electron 主进程 → 界面日志面板）
+    emitLogSink(level, typeof tag === "string" ? tag : "", text)
+    // 同时落盘：此前只有显式调用 fileLog 的少数位置才写文件，INFO/WARN 诊断从不落盘
+    fileLog(text, typeof tag === "string" ? tag : "")
 }
 
 export function logSuccess(tag, ...args) {
@@ -549,28 +634,28 @@ export const error = function () {
  *
  * @param {number} level - 详细程度级别
  */
-export const setVerbose = (level) => log.setLevel(Math.max(0, log.levels.WARN - level))
+export const setVerbose = (level) => setLogLevel(Math.max(0, LEVEL_BY_NAME.WARN - level))
 
 /**
- * 设置日志级别
+ * 设置日志级别（兼容旧签名：数值；现同时作用于两条日志路径）
  *
- * @param {number} lvl - 日志级别
+ * @param {number|string} lvl - 日志级别（数值或名称）
  */
-export const setLevel = (lvl) => log.setLevel(lvl)
+export const setLevel = (lvl) => setLogLevel(lvl)
 
 /**
  * 获取当前日志级别
  *
  * @returns {number} 日志级别
  */
-export const getLevel = () => log.getLevel()
+export const getLevel = () => activeLevel
 
 /**
  * 检查是否处于详细模式（INFO及以上）
  *
  * @returns {boolean} 如果是详细模式返回true
  */
-export const isVerbose = () => log.getLevel() <= log.levels.INFO
+export const isVerbose = () => activeLevel <= LEVEL_BY_NAME.INFO
 
 /**
  * 设置日志记录器名称
