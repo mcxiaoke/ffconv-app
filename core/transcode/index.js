@@ -13,7 +13,8 @@ export {
 export { createPublicPlanSnapshot, createPublicTaskSnapshot } from "./ffmpeg_plan_snapshot.js"
 export { deleteCompletedSources, prepareFFmpegPlan } from "./ffmpeg_planner.js"
 export { SKIP_REASON } from "./ffmpeg_result.js"
-export { LOG_TAG, runFFmpeg, setFFmpegPath } from "./ffmpeg_run.js"
+// resolveEntryHwPlan：宿主「实测本机命令」按钮复用执行期同一套 selectTier 决策
+export { LOG_TAG, resolveEntryHwPlan, runFFmpeg, setFFmpegPath } from "./ffmpeg_run.js"
 export { collectInputFiles, scanDesktopInputFiles, scanFFmpegInputs } from "./ffmpeg_scan.js"
 export { buildCliTask } from "./ffmpeg_task.js"
 export { resolveFFmpegBinary, resolveFFprobeBinary } from "./ffmpeg_bin.js"

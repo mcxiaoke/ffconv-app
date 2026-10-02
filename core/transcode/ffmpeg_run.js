@@ -666,7 +666,11 @@ async function executeFFmpeg(args, entry, options = null) {
 }
 
 /**
- * 硬件加速分层决策（S-4 方案核心）
+ * 解析单个条目的硬件分层计划（S-4 方案核心）。
+ *
+ * 抽成独立导出函数的动机：桌面端详情页的「实测本机命令」按钮必须与真实执行走
+ * **完全同一套**入参与 selectTier 决策 —— 若宿主各自拼参数，任何一处漂移都会让
+ * 「实测」结论与实际执行不符。执行期的 resolveHwPlan 现在只是本函数的一层薄封装。
  *
  * 双层：
  *   第一层 硬件检测 —— detectHardwareCapabilities()（进程内缓存，只跑一次）
@@ -674,10 +678,17 @@ async function executeFFmpeg(args, entry, options = null) {
  *   第二层 文件探测 —— selectTier() 逐层干跑（按组合缓存）
  *                     回答「哪个层能吃下这个文件」
  *
- * @param {object} entry 文件条目（需 info.video / dstArgs）
+ * @param {object} entry 文件条目（需 info / preset / argv / dstArgs / path）
+ * @param {object} [opts]
+ * @param {object|null} [opts.caps] 硬件能力（缺省内部探测；宿主可传入同一份缓存结果）
+ * @param {string|null} [opts.ffmpegPath] ffmpeg 二进制（缺省模块级路径）
+ * @param {AbortSignal|null} [opts.signal]
  * @returns {Promise<object>} { tier, size, degraded, tried, reason, caps }
  */
-async function resolveHwPlan(entry, signal = null) {
+export async function resolveEntryHwPlan(
+    entry,
+    { caps = null, ffmpegPath: bin = null, signal = null } = {},
+) {
     const argv = entry.argv || {}
     if (signal?.aborted) {
         const error = new Error("Operation cancelled")
@@ -700,7 +711,8 @@ async function resolveHwPlan(entry, signal = null) {
     }
 
     // ---- 第一层：硬件检测（进程内缓存）----
-    const caps = await detectHardwareCapabilities({ ffmpegPath: ffmpegPath })
+    const resolvedCaps = caps || (await detectHardwareCapabilities({ ffmpegPath: bin || ffmpegPath }))
+    const ffmpegBin = bin || ffmpegPath
 
     // 失败重试（retryOnFailed）会把 decodeMode 置为 cpu，这里必须真正生效
     const decodeMode = argv.decodeMode || DecodeMode.AUTO
@@ -722,7 +734,7 @@ async function resolveHwPlan(entry, signal = null) {
             degraded: false,
             tried: ["cpu"],
             reason: "video copy (no re-encode)",
-            caps,
+            caps: resolvedCaps,
             decodeMode,
             forcedEncoder,
         }
@@ -738,8 +750,8 @@ async function resolveHwPlan(entry, signal = null) {
     // selectTier 失败时错误直接上抛：gpu 模式硬失败（「手动模式必须硬失败」）；
     // auto 模式下连 cpu 兜底都失败同样属异常，两条路径行为一致。
     const plan = await selectTier({
-        caps,
-        ffmpegPath: ffmpegPath,
+        caps: resolvedCaps,
+        ffmpegPath: ffmpegBin,
         inputPath: entry.path,
         srcW,
         srcH,
@@ -767,8 +779,14 @@ async function resolveHwPlan(entry, signal = null) {
         anime: entry.dstArgs?.anime || entry.preset?.userArgs?.anime || argv.anime === true,
         signal,
     })
-    return { ...plan, caps, decodeMode }
+    return { ...plan, caps: resolvedCaps, decodeMode }
 }
+
+/** 执行期薄封装：调用方只关心「这个文件实际走哪一层」 */
+async function resolveHwPlan(entry, signal = null) {
+    return resolveEntryHwPlan(entry, { ffmpegPath, signal })
+}
+
 async function runFFmpeg(entry, options = {}) {
     return toRunResult(await runFFmpegCmd(entry, options))
 }
