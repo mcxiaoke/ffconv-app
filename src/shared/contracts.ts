@@ -292,6 +292,58 @@ export interface ExecutionOptions {
   dryRun?: boolean
 }
 
+/**
+ * 持久化队列项状态。
+ *
+ * 与 `TaskStatus` 刻意分开：队列是**跨会话**的事实源，只记录稳定结论
+ * （不落 running 之外的中间态；`interrupted` 表示上次运行中被中断）。
+ */
+export type QueueItemStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "skipped"
+  | "cancelled"
+  | "interrupted"
+
+/**
+ * 持久化队列条目（`userData/queue.json` 的单条）。
+ *
+ * 只存「意图与结论」：源路径/名称/大小/源 mtime/状态/产物路径/入队时间。
+ * **不存** argv / hwPlan / mediaInfo —— 它们依赖硬件探测结果与文件当前状态，
+ * 跨会话复原会与阶段一的硬件能力判定冲突（详见 PHASE2 方案 D1）。
+ */
+export interface QueueItem {
+  id: string
+  path: string
+  name: string
+  size: number
+  srcMtimeMs: number | null
+  status: QueueItemStatus
+  error: string | null
+  fileDst: string | null
+  enqueuedAt: number
+}
+
+export interface QueueStats {
+  total: number
+  queued: number
+  running: number
+  success: number
+  failed: number
+  skipped: number
+  cancelled: number
+  interrupted: number
+}
+
+/** `queue:get` / `queue:reorder` 的返回形状，也是 `queue:changed` 的载荷 */
+export interface QueueSnapshot {
+  schemaVersion: number
+  items: QueueItem[]
+  stats: QueueStats
+}
+
 export interface ExecutionSnapshot {
   status: RunnerState
   planId: string | null
@@ -320,6 +372,12 @@ export interface DesktopApi {
   stopExecution(): Promise<{ ok: boolean; message?: string }>
   getExecutionStatus(): Promise<ExecutionSnapshot>
   onEngineEvent(callback: (event: EngineEvent) => void): () => void
+  /** 读取持久化队列快照（启动水合 / 手动刷新） */
+  getQueue(): Promise<QueueSnapshot>
+  /** 以全量 id 顺序重排队列；ids 必须与当前集合完全一致，否则主进程拒绝 */
+  reorderQueue(ids: string[]): Promise<QueueSnapshot>
+  /** 订阅主进程队列变更广播（执行期状态回写等），返回退订函数 */
+  onQueueChanged(callback: (snapshot: QueueSnapshot) => void): () => void
   showInFolder(fullPath: string): Promise<void>
   openPath(fullPath: string): Promise<string>
   copyText(text: string): Promise<boolean>

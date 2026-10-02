@@ -187,6 +187,18 @@ export const useConfigStore = defineStore("config", () => {
     inputs.value = []
   }
 
+  /**
+   * 用持久化队列的顺序覆盖输入清单（启动恢复 / 重排后）。
+   *
+   * 队列项皆为具体文件路径（目录在入队时已由主进程展开），因此这里写入的是显式
+   * 文件列表，顺序即执行顺序。空列表不覆盖——避免把用户当前输入误清空。
+   */
+  function setInputsFromQueue(paths: string[]) {
+    const list = (paths || []).filter((p): p is string => typeof p === "string" && p.length > 0)
+    if (list.length === 0) return
+    inputs.value = [...list]
+  }
+
   // ===== 设置持久化 =====
   // 用户配置（预设/调参/高级选项/输出）此前只活在内存，每次启动复位。
   // 现在经 IPC 落 userData/settings.json，启动时水合恢复。
@@ -326,5 +338,6 @@ export const useConfigStore = defineStore("config", () => {
     removeInput,
     removeInputs,
     clearInputs,
+    setInputsFromQueue,
   }
 })

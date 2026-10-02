@@ -44,6 +44,9 @@ export const IPC_CHANNELS = {
   ENV_SET_CUSTOM_PATHS: "env:set-custom-paths",
   SETTINGS_GET: "settings:get",
   SETTINGS_SET: "settings:set",
+  QUEUE_GET: "queue:get",
+  QUEUE_REORDER: "queue:reorder",
+  QUEUE_CHANGED: "queue:changed",
 } as const
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS]

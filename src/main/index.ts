@@ -400,6 +400,12 @@ function createWindow() {
       mainWindow.webContents.send(IPC_CHANNELS.EXECUTION_EVENT, toSerializable(event))
     }
   })
+  // 队列变更广播：执行期状态回写与重排结果主动推给渲染层，避免其轮询
+  transcodeService.setQueueChangeSink((snapshot) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC_CHANNELS.QUEUE_CHANGED, toSerializable(snapshot))
+    }
+  })
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault())
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -481,6 +487,15 @@ handleTrusted(IPC_CHANNELS.STAGE_CLEAR, async () => {
 handleTrusted(IPC_CHANNELS.STAGE_REMOVE, async (paths: unknown) => {
   if (!Array.isArray(paths)) throw new Error("paths must be an array of strings")
   return transcodeService.removeStagedInputs(paths as string[])
+})
+// 持久化队列：入队/移除/清空复用既有 staging 通道（主进程内写穿镜像），
+// 这里只暴露读取与全量重排；入参一律按 unknown 收窄，主进程侧校验是唯一安全门。
+handleTrusted(IPC_CHANNELS.QUEUE_GET, () => transcodeService.getQueueSnapshot())
+handleTrusted(IPC_CHANNELS.QUEUE_REORDER, (ids: unknown) => {
+  if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+    throw new Error("ids must be an array of strings")
+  }
+  return transcodeService.reorderQueue(ids as string[])
 })
 handleTrusted(IPC_CHANNELS.PLAN_CREATE, (body: Record<string, unknown>) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) {

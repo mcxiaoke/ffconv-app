@@ -26,6 +26,7 @@ import {
 import { FfmpegEnvironment } from "./ffmpeg-environment.js"
 import { FfmpegManifest } from "./ffmpeg-manifest.js"
 import { PathWhitelist } from "./path-whitelist.js"
+import { QueueStore } from "./queue-store.js"
 import {
   startPreventSuspension,
   stopPreventSuspension,
@@ -39,6 +40,8 @@ import type {
   MediaInfoPayload,
   PlanTask,
   PublicPlanSnapshot,
+  QueueItemStatus,
+  QueueSnapshot,
   RunnerState,
   StageInputsResult,
   TaskProbeResult,
@@ -114,6 +117,37 @@ type RunContext = {
 type EngineLogRecord = { level: string; tag: string; message: string; timestamp: number }
 
 /**
+ * 把扫描条目上的 mtime 归一成毫秒时间戳。
+ * `collectInputFiles` 的 mtime 来自 fs.stat（Date 或 epoch 视实现而定），
+ * 队列只做展示提示，故解析不出时返回 null 而非抛错。
+ */
+function toMtimeMs(value: unknown): number | null {
+  if (value instanceof Date) {
+    const ms = value.getTime()
+    return Number.isFinite(ms) ? ms : null
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  return null
+}
+
+/** 队列回写用的路径→状态映射：把引擎 taskId 状态翻译成队列状态 */
+function queueStatusOfEngineEvent(event: EngineEvent): QueueItemStatus | null {
+  switch (event.type) {
+    case "task.started":
+      return "running"
+    case "task.cancelled":
+      return "cancelled"
+    case "task.skipped":
+      return "skipped"
+    case "task.done":
+      // 失败任务同样走 task.done（引擎无 task.failed 事件），靠 failed 标记区分
+      return event.failed === true ? "failed" : "success"
+    default:
+      return null
+  }
+}
+
+/**
  * Desktop 宿主转码服务：session/staging/plan/execute 协调与上下文组合。
  * 环境（二进制/预设/硬件）、路径白名单持久化、manifest 细节分别收敛到
  * ffmpeg-environment.ts / path-whitelist.ts / ffmpeg-manifest.ts，本类不内嵌。
@@ -122,6 +156,10 @@ class DesktopTranscodeService {
   private readonly environment: FfmpegEnvironment
   private readonly whitelist: PathWhitelist
   private readonly manifest: FfmpegManifest
+  /** 持久化队列（userData/queue.json）：跨会话保留输入清单与结论状态 */
+  private readonly queue: QueueStore
+  /** 队列变更 → 渲染层广播（main/index.ts 注入，避免队列变化只能靠轮询） */
+  private queueChangeSink: ((snapshot: QueueSnapshot) => void) | null = null
   private currentPlan: InternalPlan | null = null
   // item/task 目前只做登记（唯一被读取的是 info），故用联合类型容纳
   // 「staging 阶段的扫描条目/公开任务」与「编排后的内部任务」两种形态。
@@ -189,6 +227,58 @@ class DesktopTranscodeService {
     this.environment = new FfmpegEnvironment({ getAppPath: () => app.getAppPath() })
     this.whitelist = new PathWhitelist(path.join(userData, "authorized-paths.json"))
     this.manifest = new FfmpegManifest(path.join(userData, "active-tasks.json"))
+    this.queue = new QueueStore(path.join(userData, "queue.json"))
+  }
+
+  /** 注入队列变更广播（main/index.ts 经 IPC `queue:changed` 转发给渲染层） */
+  setQueueChangeSink(sink: ((snapshot: QueueSnapshot) => void) | null): void {
+    this.queueChangeSink = sink
+  }
+
+  /** 队列快照（IPC `queue:get`） */
+  getQueueSnapshot(): QueueSnapshot {
+    return this.queue.getSnapshot()
+  }
+
+  /**
+   * 全量重排队列（IPC `queue:reorder`）。
+   * 执行中拒绝（引擎正在按当前顺序写盘，重排会让事件与队列对不上）；
+   * ids 不是当前集合的排列时抛错，绝不部分应用。
+   */
+  reorderQueue(ids: string[]): QueueSnapshot {
+    if (this.isExecuting()) {
+      throw new Error("Cannot reorder the queue while a transcode is running")
+    }
+    if (!this.queue.reorder(ids)) {
+      throw new Error("Queue reorder payload does not match current items")
+    }
+    const snapshot = this.queue.getSnapshot()
+    this.queueChangeSink?.(snapshot)
+    return snapshot
+  }
+
+  private emitQueueChanged(): void {
+    const snapshot = this.queue.getSnapshot()
+    this.queueChangeSink?.(snapshot)
+  }
+
+  /**
+   * 崩溃/退出恢复：把队列里遗留的 `running` 降级为 `interrupted`，
+   * 并把队列项登记进 stagedEntries（info=null），使「再次导入同一文件」仍被去重。
+   *
+   * 只登记键：`isKnownMediaPath` 只遍历键，`stageInputs` 只用 `.has()` 判重，
+   * 值本身在重建计划前不会被读取，故用最小占位对象而非完整投影。
+   */
+  private restoreQueueIntoStaging(): void {
+    for (const item of this.queue.getSnapshot().items) {
+      const canonical = path.resolve(item.path)
+      if (this.stagedEntries.has(canonical)) continue
+      this.stagedEntries.set(canonical, {
+        item: { path: item.path, name: item.name, size: item.size },
+        task: { id: item.id, path: item.path, name: item.name, fileDst: "", status: "staged" },
+        info: null,
+      })
+    }
   }
 
   /**
@@ -284,7 +374,14 @@ class DesktopTranscodeService {
   }
 
   async initialize() {
-    await Promise.all([this.manifest.recoverStaleTasks(), this.whitelist.loadAuthorizedPaths()])
+    await Promise.all([
+      this.manifest.recoverStaleTasks(),
+      this.whitelist.loadAuthorizedPaths(),
+      this.queue.load(),
+    ])
+    // 崩溃语义：上次运行中被中断的项降级为 interrupted（绝不自动重跑，见 D5）
+    this.queue.markRunningInterrupted()
+    this.restoreQueueIntoStaging()
   }
 
   /** 将用户/配置传入的 jobs 规范化到 [1, MAX_CONCURRENCY] */
@@ -395,6 +492,18 @@ class DesktopTranscodeService {
     const workers = Array.from({ length: Math.min(limit, newItems.length) }, () => probeWorker())
     await Promise.all(workers)
 
+    // 写穿到持久化队列：staging 是「显式把文件加入待处理队列」的唯一入口，
+    // 队列随之镜像（单一写者），关窗/崩溃后仍能恢复。按 canonical 路径去重。
+    this.queue.addItems(
+      newItems.map((item) => ({
+        path: item.path,
+        name: item.name,
+        size: item.size,
+        srcMtimeMs: toMtimeMs((item as { mtime?: unknown }).mtime),
+      })),
+    )
+    this.emitQueueChanged()
+
     this.eventSink?.({
       type: "task.log",
       level: "INFO",
@@ -419,6 +528,9 @@ class DesktopTranscodeService {
     }
     this.stagedEntries.clear()
     this.currentPlan = null
+    // 写穿队列：清空输入清单同时清空持久化队列，否则下次启动会「复活」
+    this.queue.clear()
+    this.emitQueueChanged()
     return { ok: true }
   }
 
@@ -437,6 +549,10 @@ class DesktopTranscodeService {
       if (this.stagedEntries.delete(canonical)) {
         removed++
       }
+    }
+    if (removed > 0) {
+      this.queue.removeByPaths(paths)
+      this.emitQueueChanged()
     }
     return { removed, totalCount: this.stagedEntries.size }
   }
@@ -933,6 +1049,21 @@ class DesktopTranscodeService {
             }
           }
         }
+        // 队列状态回写：plan 是「本次会话」的视图，queue 是跨会话事实源，
+        // 两者由同一批引擎事件驱动，但生命周期不同（plan 会随重建被替换）。
+        // 按 path 回写而非 taskId：taskId 是位置派生的，跨会话不成立。
+        const queueStatus = queueStatusOfEngineEvent(event)
+        if (queueStatus) {
+          const pt = this.currentPlan?.tasks?.find((x) => x.id === event.taskId)
+          if (pt?.path) {
+            this.queue.updateByPath(pt.path, {
+              status: queueStatus,
+              error: event.failed === true ? (event.result?.error ?? pt.error ?? null) : null,
+              fileDst: typeof event.result?.outputPath === "string" ? event.result.outputPath : undefined,
+            })
+            this.emitQueueChanged()
+          }
+        }
         this.eventSink?.(event)
       },
     })
@@ -1098,7 +1229,10 @@ class DesktopTranscodeService {
     updateTaskbarProgress(-1)
     this.killTrackedProcessesSync()
     void this.manifest.clearTaskManifest()
+    // 退出前尽力落盘队列（防抖窗口内退出会丢最后一次状态变更）
+    void this.queue.flushPersist()
     this.eventSink = null
+    this.queueChangeSink = null
   }
 }
 

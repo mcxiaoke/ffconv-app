@@ -421,6 +421,7 @@ async function clearAll() {
 
 let unsubscribeEvents: (() => void) | null = null
 let unsubscribeMenu: (() => void) | null = null
+let unsubscribeQueue: (() => void) | null = null
 
 async function pickFilesGlobal() {
   try {
@@ -562,6 +563,21 @@ onMounted(async () => {
   // 下面的「预设是否仍然存在」校验要以已恢复的预设为基准
   await configStore.hydrate()
 
+  // 恢复持久化队列（上次会话的输入清单与任务行）。必须在 configStore.hydrate
+  // 之后：hydrate 会写 configStore.inputs，队列路径要在其基础上覆盖。
+  // 恢复态一律「待扫描」，**绝不自动开始** —— argv/硬件方案需重新探测。
+  if (window.api?.getQueue) {
+    try {
+      const snap = await window.api.getQueue()
+      if (snap?.items?.length) {
+        planStore.hydrateFromQueue(snap.items)
+        configStore.setInputsFromQueue(snap.items.map((i) => i.path))
+      }
+    } catch (err) {
+      console.error("Failed to restore queue:", err)
+    }
+  }
+
   // 先拿轻量预设目录：左侧面板（预设 / 视频 / 音频）立刻可用，
   // 不必等硬件探测（ffmpeg -version + 枚举编码器 + GPU 逐项探测，实测 1~2s）。
   await envStore.fetchPresets()
@@ -643,6 +659,20 @@ onMounted(async () => {
 
   // Subscribe to engine IPC events
   unsubscribeEvents = window.api.onEngineEvent(handleEngineEvent)
+
+  /**
+   * 队列变更广播订阅。
+   *
+   * 只镜像快照（供重排按钮做 path→queueId 映射），**不直接用队列刷新表格**：
+   * ① 执行期主进程会按引擎事件高频回写队列状态，重放会覆盖正在被计划与事件驱动的表格；
+   * ② 新入队文件的去重/勾选/解除排除由 addStagedTasks 统一处理，这里若抢先插入
+   *    任务行，会让 addStagedTasks 因 path 已存在而跳过，遗留 excludedPaths 状态。
+   */
+  if (window.api?.onQueueChanged) {
+    unsubscribeQueue = window.api.onQueueChanged((snapshot) => {
+      planStore.setQueueItems(snapshot?.items)
+    })
+  }
 })
 
 onUnmounted(() => {
@@ -651,6 +681,7 @@ onUnmounted(() => {
   window.removeEventListener("beforeunload", handleBeforeUnload)
   unsubscribeEvents?.()
   unsubscribeMenu?.()
+  unsubscribeQueue?.()
 })
 </script>
 

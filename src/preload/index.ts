@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 import { IPC_CHANNELS, MENU_ACTION_CHANNEL } from "../shared/ipc-channels.js"
-import type { DesktopApi, EngineEvent } from "../shared/contracts.js"
+import type { DesktopApi, EngineEvent, QueueSnapshot } from "../shared/contracts.js"
 
 function safeClone<T>(val: T): T {
   if (val === undefined || val === null) return val
@@ -64,6 +64,17 @@ const api: DesktopApi = {
     const listener = (_event: unknown, data: EngineEvent) => callback(data)
     ipcRenderer.on(IPC_CHANNELS.EXECUTION_EVENT, listener)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.EXECUTION_EVENT, listener)
+  },
+  getQueue() {
+    return ipcRenderer.invoke(IPC_CHANNELS.QUEUE_GET)
+  },
+  reorderQueue(ids) {
+    return ipcRenderer.invoke(IPC_CHANNELS.QUEUE_REORDER, safeClone(ids))
+  },
+  onQueueChanged(callback) {
+    const listener = (_event: unknown, data: QueueSnapshot) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.QUEUE_CHANGED, listener)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.QUEUE_CHANGED, listener)
   },
   showInFolder(fullPath) {
     return ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_SHOW_IN_FOLDER, fullPath)

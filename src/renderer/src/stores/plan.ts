@@ -3,6 +3,7 @@ import { ref, shallowRef, computed } from "vue"
 import type {
   PublicPlanSnapshot,
   PlanTask,
+  QueueItem,
   RunnerState,
   TaskProbeResult,
   TaskStatus,
@@ -414,7 +415,76 @@ export const usePlanStore = defineStore("plan", () => {
     return out
   }
 
+  /** 最近一次主进程队列快照（仅内存镜像；队列的持久化事实源在主进程） */
+  const queueItems = ref<QueueItem[]>([])
+
+  function setQueueItems(items: QueueItem[] | null | undefined) {
+    queueItems.value = Array.isArray(items) ? items : []
+  }
+
+  /**
+   * 从持久化队列水合任务行（启动恢复）。
+   *
+   * 恢复态一律显示为 `staged`（「待扫描」）：队列只存意图与结论，argv/hwPlan 需要
+   * 重新探测，故恢复后必须先重建计划才能执行（方案 D1/D5）。**绝不自动开始**。
+   */
+  function hydrateFromQueue(items: QueueItem[] | null | undefined) {
+    setQueueItems(items)
+    const list = Array.isArray(items) ? items : []
+    if (list.length === 0) return
+    const seen = new Set(tasks.value.map((t) => t.path))
+    const hydrated: PlanTask[] = []
+    for (const item of list) {
+      if (!item?.path || seen.has(item.path)) continue
+      seen.add(item.path)
+      hydrated.push({
+        id: item.id,
+        index: tasks.value.length + hydrated.length,
+        name: item.name,
+        path: item.path,
+        size: item.size || 0,
+        duration: 0,
+        fileDst: item.fileDst || "",
+        status: "staged",
+        error: item.error || null,
+        skipReason: null,
+      })
+    }
+    if (hydrated.length === 0) return
+    tasks.value = [...tasks.value, ...hydrated]
+    // 已恢复的行默认全部勾选，但**不触发任何执行**（执行仅由用户显式动作发起）
+    selectedIds.value = new Set(tasks.value.map((t) => t.id))
+    activeTaskId.value = tasks.value[0]?.id || null
+    if (status.value === "IDLE" || status.value === "READY") {
+      status.value = "STALE"
+    }
+  }
+
+  /**
+   * 按队列顺序重排任务行（上/下移按钮的唯一收口）。
+   *
+   * 队列顺序 = 执行顺序，只由显式重排改变。这里重排数组并重编号 `index`，让 `#`
+   * 列与队列顺序一致（createPlan 重建时会按新顺序重新编号）；视图排序不经过这里。
+   */
+  function applyQueueOrder(orderedPaths: string[]) {
+    if (!Array.isArray(orderedPaths) || orderedPaths.length === 0) return
+    const rank = new Map(orderedPaths.map((p, i) => [p, i]))
+    const list = [...tasks.value]
+    list.sort((a, b) => {
+      const ra = rank.has(a.path) ? (rank.get(a.path) as number) : Number.MAX_SAFE_INTEGER
+      const rb = rank.has(b.path) ? (rank.get(b.path) as number) : Number.MAX_SAFE_INTEGER
+      return ra - rb
+    })
+    tasks.value = list.map((t, i) => (t.index === i ? t : { ...t, index: i }))
+    // 计划是按旧顺序生成的，重排后必须重建才能让执行顺序生效
+    markStale()
+  }
+
   return {
+    queueItems,
+    setQueueItems,
+    hydrateFromQueue,
+    applyQueueOrder,
     status,
     planSnapshot,
     tasks,

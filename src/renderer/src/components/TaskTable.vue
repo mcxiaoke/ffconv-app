@@ -220,6 +220,62 @@ function removeTask(task: PlanTask, event?: MouseEvent) {
   })
 }
 
+// ============ 队列顺序调整（上/下移） ============
+// 队列顺序 = 执行顺序。仅在按「#」（执行顺序）展示且非忙碌时允许调整；
+// 按大小/时长排序时表格只是视图重排，此时禁止上下移以免误改执行顺序。
+
+const canReorder = computed(() => sortKey.value === "index" && !isPlanBusy())
+
+function execIndex(task: PlanTask) {
+  return planStore.tasks.findIndex((t) => t.id === task.id)
+}
+
+function canMove(task: PlanTask, delta: number) {
+  if (!canReorder.value) return false
+  const i = execIndex(task)
+  const j = i + delta
+  return i >= 0 && j >= 0 && j < planStore.tasks.length
+}
+
+/**
+ * 上/下移任务的唯一实现。
+ *
+ * 渲染层的 `planStore.tasks` 顺序即执行顺序；这里先在本地换位，再用
+ * `queueItems` 的 path→queueId 映射构造**全量** id 排列调主进程 `reorderQueue`
+ * （主进程做全量排列校验，不一致会拒绝，故映射不全时只做本地重排不落库）。
+ */
+async function moveTask(task: PlanTask, delta: number, event?: MouseEvent) {
+  event?.stopPropagation()
+  if (!canMove(task, delta)) return
+  const list = [...planStore.tasks]
+  const i = execIndex(task)
+  const j = i + delta
+  ;[list[i], list[j]] = [list[j], list[i]]
+  const orderedPaths = list.map((t) => t.path)
+
+  const byPath = new Map(planStore.queueItems.map((q) => [q.path, q.id]))
+  const ids = orderedPaths.map((p) => byPath.get(p))
+  if (ids.some((id) => !id)) {
+    // 队列镜像缺失（如恢复尚未完成）：仅本地重排，不落库
+    planStore.applyQueueOrder(orderedPaths)
+    return
+  }
+
+  try {
+    const snap = await window.api.reorderQueue(ids as string[])
+    planStore.setQueueItems(snap?.items)
+    const paths = snap?.items?.map((x) => x.path) ?? orderedPaths
+    planStore.applyQueueOrder(paths)
+    configStore.setInputsFromQueue(paths)
+  } catch (err) {
+    logStore.append({
+      level: "ERROR",
+      message: `调整顺序失败: ${err instanceof Error ? err.message : String(err)}`,
+      timestamp: new Date().toLocaleTimeString(),
+    })
+  }
+}
+
 function openInFolder(task: PlanTask, event?: MouseEvent) {
   event?.stopPropagation()
   // Before transcoding finishes, locate the existing source file;
@@ -662,6 +718,30 @@ const selectedTaskPreview = computed(() => {
                     <polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2" />
                     <line x1="12" y1="8" x2="12" y2="12" />
                     <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </button>
+                <button
+                  class="icon-btn"
+                  title="上移（调整执行顺序）"
+                  data-testid="btn-move-up"
+                  :disabled="!canMove(task, -1)"
+                  @click="moveTask(task, -1, $event)"
+                >
+                  <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="19" x2="12" y2="5" />
+                    <polyline points="5 12 12 5 19 12" />
+                  </svg>
+                </button>
+                <button
+                  class="icon-btn"
+                  title="下移（调整执行顺序）"
+                  data-testid="btn-move-down"
+                  :disabled="!canMove(task, 1)"
+                  @click="moveTask(task, 1, $event)"
+                >
+                  <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <polyline points="19 12 12 19 5 12" />
                   </svg>
                 </button>
                 <button
@@ -1281,6 +1361,16 @@ tbody tr.dim {
 .icon-btn:hover {
   background: var(--bg-hover);
   color: var(--text-base);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-3);
 }
 
 .icon-btn.err-icon {
