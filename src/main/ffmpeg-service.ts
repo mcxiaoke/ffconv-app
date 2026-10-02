@@ -3,6 +3,7 @@ import { execFileSync, execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import {
+  addLogSink,
   codecFamilyOfPreset,
   collectInputFiles,
   createFFmpegArgs,
@@ -95,6 +96,9 @@ type RunContext = {
   onLog: (line: string) => void
 }
 
+/** 引擎日志汇聚记录（core/lib/debug.js 的 addLogSink 载荷） */
+type EngineLogRecord = { level: string; tag: string; message: string; timestamp: number }
+
 /**
  * Desktop 宿主转码服务：session/staging/plan/execute 协调与上下文组合。
  * 环境（二进制/预设/硬件）、路径白名单持久化、manifest 细节分别收敛到
@@ -139,6 +143,16 @@ class DesktopTranscodeService {
   /** 由主进程注入原生确认框（见 main/index.ts） */
   setDeleteSourceConfirmer(fn: (options: Record<string, unknown>) => Promise<boolean>): void {
     this.confirmDeleteSource = fn
+  }
+
+  /**
+   * 注册引擎日志汇聚回调（见 core/lib/debug.js 的 addLogSink）。
+   *
+   * 主进程经此把引擎日志转发到渲染层的「运行日志」面板；由本类转发是为了把
+   * 对 core/ 的 import 继续收敛在 ffmpeg-service.ts 这唯一入口，main/index.ts 不直连 core。
+   */
+  registerLogSink(sink: (record: EngineLogRecord) => void): () => void {
+    return addLogSink(sink)
   }
 
   constructor() {

@@ -97,6 +97,35 @@ function startupLog(message: string) {
   }
 }
 
+/**
+ * 引擎日志 → 渲染层「运行日志」面板。
+ *
+ * 引擎（core/**）的日志此前只写主进程 console 与系统临时文件，宿主天然收不到，
+ * 于是环境探测（hwdetect 的构建/编码器/硬件栈摘要）、参数编排警告等
+ * 「初始化日志」在应用里完全不可见，用户无法自查。
+ *
+ * 只转发 INFO/WARN/ERROR：DEBUG/TRACE 是引擎内部高频轨迹，转发会淹没面板
+ * （与面板默认不展示 DEBUG 的取向一致）。窗口加载完成前（webContents.isLoading()）
+ * 直接跳过——渲染层在 onMounted 最开始就订阅引擎事件，早于 fetchPresets/fetchEnv，
+ * 因此加载完成后到达的环境探测日志不会丢。
+ */
+transcodeService.registerLogSink((record) => {
+  const level = String(record?.level || "INFO").toUpperCase()
+  if (level !== "INFO" && level !== "WARN" && level !== "ERROR") return
+  const window = mainWindow
+  if (!window || window.isDestroyed() || window.webContents.isLoading()) return
+  const message = record.tag ? `[${record.tag}] ${record.message}` : String(record.message || "")
+  window.webContents.send(
+    IPC_CHANNELS.EXECUTION_EVENT,
+    toSerializable({
+      type: "task.log",
+      level,
+      message,
+      timestamp: new Date().toLocaleTimeString(),
+    }),
+  )
+})
+
 process.on("uncaughtException", (error) => {
   startupLog(`uncaughtException: ${error.stack || error}`)
   console.error(error)

@@ -304,3 +304,16 @@ test.describe("Phase1 - 日志面板跟随主题", () => {
     expect(light).not.toBe("rgb(13, 17, 23)")
   })
 })
+
+test.describe("Phase1 - 引擎日志进入运行日志面板", () => {
+  test("环境探测（hwdetect）的初始化日志经日志汇聚出现在面板", async ({ appWindow }) => {
+    // 日志面板无需预先打开：logStore 在收到事件时即写入缓冲区
+    await appWindow.locator('[data-testid="btn-open-log"]').click()
+    const logDrawer = appWindow.locator('[data-testid="log-drawer"]')
+    await expect(logDrawer).toBeVisible()
+
+    // hwdetect 的环境摘要（ffmpeg 构建 / 编码器 / 硬件加速栈 / GPU）此前只写主进程
+    // console 与临时文件，从不进面板；这里断言它已被转发。
+    await expect(logDrawer).toContainText("[hwdetect]", { timeout: 30000 })
+  })
+})

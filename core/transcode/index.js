@@ -19,6 +19,8 @@ export { buildCliTask } from "./ffmpeg_task.js"
 export { resolveFFmpegBinary, resolveFFprobeBinary } from "./ffmpeg_bin.js"
 // 媒体元数据探测是转码前置能力，统一经 facade 暴露，避免宿主直连 legacy lib/
 export { getMediaInfo } from "../lib/mediainfo.js"
+// 日志汇聚点：宿主（Electron 主进程）用它把引擎日志接入界面日志面板
+export { addLogSink } from "../lib/debug.js"
 // codecFamilyOfPreset：宿主生成「预计命令」时需要目标输出 codec 族（编码侧预筛入参）
 export { TIERS, codecFamilyOfPreset, resolvePreviewHwPlan } from "./hwaccel.js"
 export { detectHardwareCapabilities } from "./hwdetect.js"

@@ -15,6 +15,69 @@ import os from "os"
 import path from "path"
 import util from "util"
 
+// ---------------------------------------------------------------------------
+// 日志汇聚点（Host Log Sink）
+// ---------------------------------------------------------------------------
+// 引擎日志此前只写进程 console 与系统临时文件，宿主（Electron 主进程）无从得知，
+// 于是环境探测、参数编排警告等日志进不了应用内的「运行日志」面板。
+// 这里提供只读汇聚回调：宿主注册后，每条日志在原有输出之外再回调一次。
+//
+// ⚠️ 引擎存在两条并行的日志路径，二者都必须汇聚（否则会漏掉一半日志）：
+//   1) `log.info/warn/error/debug`（loglevel，见 applyCustomPlugin）
+//   2) `logWithTag` 家族（logInfo/logWarn/logError/logSuccess/logTask/…）
+//      —— 它们直接 console.log，不经过 loglevel，因此 setLevel 对它们无效。
+const logSinks = new Set()
+
+/**
+ * 注册日志汇聚回调（宿主用，如 Electron 主进程转发到界面日志面板）
+ * @param {(record: {level: string, tag: string, message: string, timestamp: number}) => void} sink
+ * @returns {() => void} 取消注册
+ */
+export function addLogSink(sink) {
+    if (typeof sink !== "function") return () => {}
+    logSinks.add(sink)
+    return () => logSinks.delete(sink)
+}
+
+/** 汇聚文本化：字符串原样，其余用 util.inspect（避免 [object Object]） */
+function formatSinkArgs(args) {
+    return args
+        .map((arg) =>
+            typeof arg === "string" ? arg : util.inspect(arg, { depth: 3, colors: false }),
+        )
+        .join(" ")
+}
+
+/** 分发到所有汇聚回调；单个回调异常不得影响日志主流程 */
+function emitLogSink(level, tag, message) {
+    if (logSinks.size === 0) return
+    const record = { level, tag, message, timestamp: Date.now() }
+    for (const sink of logSinks) {
+        try {
+            sink(record)
+        } catch {
+            // 汇聚点失败不得影响日志本身
+        }
+    }
+}
+
+/** LogCategory/字符串类别 → 汇聚级别（面板按 INFO/WARN/ERROR/DEBUG 过滤） */
+const CATEGORY_LEVEL = {
+    START: "INFO",
+    END: "INFO",
+    DONE: "INFO",
+    OK: "INFO",
+    SUCCESS: "INFO",
+    SKIP: "WARN",
+    WARN: "WARN",
+    ERROR: "ERROR",
+    FAIL: "ERROR",
+    INFO: "INFO",
+    DEBUG: "DEBUG",
+    PROGRESS: "INFO",
+    TASK: "INFO",
+}
+
 setupLogger()
 
 let loggerName = ""
@@ -57,10 +120,13 @@ function applyCustomPlugin(logger, options = {}) {
             // 获取对应日志级别的颜色函数
             const chalkFunc = msgColors[methodName.toUpperCase()]
             const messages = []
+            // 汇聚用：未经 chalk 着色的原始参数（ANSI 色码不应进入界面日志）
+            const rawArgs = []
 
             // 处理所有传入的参数
             for (let i = 0; i < arguments.length; i++) {
                 let arg = arguments[i]
+                rawArgs.push(arg)
 
                 // 如果启用了对象检查且参数是对象，使用util.inspect展开对象
                 if (options.inspectObject && typeof arg === "object") {
@@ -77,6 +143,20 @@ function applyCustomPlugin(logger, options = {}) {
 
             // 调用原始的日志方法输出处理后的消息
             rawMethod(...messages)
+            // 汇聚到宿主（是否过滤由宿主决定，此处与 console 输出保持一致）。
+            // loglevel-plugin-prefix 会把级别前缀与**首个参数拼接**（实测：
+            // log.warn("x") → 实参为 ["WARN x"]）。级别已由 level 字段单独表达，
+            // 故剥离首部的 "<级别> " 标记，避免面板里出现「WARN xxx」这类冗余前缀。
+            const levelToken = methodName.toUpperCase()
+            const joined = formatSinkArgs(rawArgs)
+            const sinkMessage = joined.startsWith(`${levelToken} `)
+                ? joined.slice(levelToken.length + 1)
+                : joined
+            emitLogSink(
+                levelToken,
+                typeof loggerName === "string" ? loggerName : "",
+                sinkMessage,
+            )
         }
     }
 
@@ -364,6 +444,9 @@ export function logWithTag(tag, category, ...args) {
     const catStr = formatLogCategory(category)
     const prefix = [tagStr, catStr].filter(Boolean).join(" ")
     console.log(prefix, ...args.map((a) => (typeof a === "object" ? a : String(a))))
+    // 本家族绕过 loglevel，必须在此单独汇聚（见文件顶部说明）
+    const key = typeof category === "string" ? category.toUpperCase() : category?.prefix
+    emitLogSink(CATEGORY_LEVEL[key] || "INFO", typeof tag === "string" ? tag : "", formatSinkArgs(args))
 }
 
 export function logSuccess(tag, ...args) {
