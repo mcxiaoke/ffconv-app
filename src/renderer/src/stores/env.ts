@@ -1,6 +1,17 @@
 import { defineStore } from "pinia"
 import { computed, ref } from "vue"
 import type { EnvironmentSummary, PresetCatalog } from "../../../shared/contracts"
+import { useLogStore } from "./log"
+
+/** 把启动期环境加载失败写进日志面板（只 console.error 等于用户无感知） */
+function logEnvFailure(message: string, err: unknown): void {
+  const detail = err instanceof Error ? err.message : String(err)
+  useLogStore().append({
+    level: "ERROR",
+    message: `${message}: ${detail}`,
+    timestamp: new Date().toLocaleTimeString(),
+  })
+}
 
 export const useEnvStore = defineStore("env", () => {
   const version = ref("0.1.0")
@@ -32,6 +43,7 @@ export const useEnvStore = defineStore("env", () => {
       catalog.value = await window.api.getPresetCatalog()
     } catch (err) {
       console.error("Failed to load preset catalog:", err)
+      logEnvFailure("预设目录加载失败（预设下拉将为空）", err)
     }
   }
 
@@ -49,6 +61,7 @@ export const useEnvStore = defineStore("env", () => {
       }
     } catch (err) {
       console.error("Failed to load environment:", err)
+      logEnvFailure("环境探测失败（硬件信息不可用）", err)
     } finally {
       loading.value = false
     }

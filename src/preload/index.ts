@@ -30,6 +30,9 @@ const api: DesktopApi = {
   getAppVersion() {
     return ipcRenderer.invoke(IPC_CHANNELS.APP_GET_VERSION)
   },
+  signalReady() {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_RENDERER_READY)
+  },
   getEnvironment() {
     return ipcRenderer.invoke(IPC_CHANNELS.ENV_GET)
   },

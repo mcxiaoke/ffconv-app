@@ -3,6 +3,10 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs"
 import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+// ⚠️ 必须最先 import：app.name 决定 userData 目录（见 app-identity.ts 注释）。
+// 此前 app.name 在下方文件体里才赋值，而 ESM import 先执行 ffmpeg-service.ts
+// 模块体，其构造器用改名前的 userData 构造 store，造成持久化目录分裂。
+import "./app-identity.js"
 import { transcodeService } from "./ffmpeg-service.js"
 import { toSerializable } from "./ipc-serializer.js"
 import { openPath, showItemInFolder, showNotification, writeClipboardText } from "./native.js"
@@ -12,9 +16,11 @@ import { IPC_CHANNELS, MENU_ACTIONS, MENU_ACTION_CHANNEL } from "../shared/ipc-c
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
+  // app.quit() 是异步的：不立刻终止的话，下面 600 行模块体（22 个 IPC handler、
+  // 3 个持久化 store、whenReady 回调）仍会执行完，窗口可能在退出完成前被创建。
+  // 第二实例此刻没有任何待落盘状态，直接退出是安全的。
+  process.exit(0)
 }
-
-app.name = "FFConv GUI"
 
 // Windows 上必须设置 AppUserModelID，否则 Notification 走「无名」身份，
 // Windows 通知中心不显示/不关联到本应用（转码完成通知会静默不弹）。
@@ -108,27 +114,67 @@ function startupLog(message: string) {
  * 「初始化日志」在应用里完全不可见，用户无法自查。
  *
  * 只转发 INFO/WARN/ERROR：DEBUG/TRACE 是引擎内部高频轨迹，转发会淹没面板
- * （与面板默认不展示 DEBUG 的取向一致）。窗口加载完成前（webContents.isLoading()）
- * 直接跳过——渲染层在 onMounted 最开始就订阅引擎事件，早于 fetchPresets/fetchEnv，
- * 因此加载完成后到达的环境探测日志不会丢。
+ * （与面板默认不展示 DEBUG 的取向一致）。窗口未创建或加载中时日志进入背板，
+ * 待渲染层 signalReady（onMounted 订阅完引擎事件后调用）统一重放——
+ * 启动链路（initialize 先于 createWindow）产生的预设加载失败等关键日志因此不再丢失。
  */
 /** 把一条日志转发到渲染层「运行日志」面板（仅 INFO/WARN/ERROR 会进入面板） */
 function forwardLogToPanel(level: unknown, tag: unknown, message: unknown): void {
   const normalized = String(level || "INFO").toUpperCase()
   if (normalized !== "INFO" && normalized !== "WARN" && normalized !== "ERROR") return
   const window = mainWindow
-  if (!window || window.isDestroyed() || window.webContents.isLoading()) return
-  const text = String(message ?? "")
+  // 窗口未创建 / 加载中：渲染层尚未订阅 EXECUTION_EVENT（preload 无缓冲/重放），
+  // 直接 send 会永久丢失。先入背板，等渲染层 signalReady 后统一重放。
+  // 此前的实现是直接丢弃 —— 启动链路（initialize 在 createWindow 之前跑）里
+  // 的预设加载失败等关键日志因此全部消失，GUI 日志面板一片空白无从排查。
+  if (!window || window.isDestroyed() || window.webContents.isLoading()) {
+    panelLogBacklog.push({ level: normalized, tag: tag, message: String(message ?? "") })
+    if (panelLogBacklog.length > PANEL_LOG_BACKLOG_MAX) {
+      panelLogBacklog.splice(0, panelLogBacklog.length - PANEL_LOG_BACKLOG_MAX)
+    }
+    return
+  }
+  sendLogToPanel(window, normalized, tag, String(message ?? ""))
+}
+
+/** 面板日志背板上限：启动日志量有限，300 条足够且防内存失控 */
+const PANEL_LOG_BACKLOG_MAX = 300
+const panelLogBacklog: Array<{ level: string; tag: unknown; message: string }> = []
+let panelLogFlushed = false
+
+function sendLogToPanel(window: BrowserWindow, level: string, tag: unknown, text: string): void {
   window.webContents.send(
     IPC_CHANNELS.EXECUTION_EVENT,
     toSerializable({
       type: "task.log",
-      level: normalized,
+      level,
       message: typeof tag === "string" && tag ? `[${tag}] ${text}` : text,
       timestamp: new Date().toLocaleTimeString(),
     }),
   )
 }
+
+/** 渲染层就绪（已订阅引擎事件）后重放启动期日志；重复调用（reload）无害 */
+function flushPanelLogBacklog(): void {
+  if (panelLogFlushed) return
+  panelLogFlushed = true
+  const window = mainWindow
+  if (!window || window.isDestroyed()) {
+    panelLogFlushed = false
+    return
+  }
+  const backlog = panelLogBacklog.splice(0, panelLogBacklog.length)
+  for (const item of backlog) {
+    sendLogToPanel(window, item.level, item.tag, item.message)
+  }
+}
+
+// 渲染层 onMounted 订阅完引擎事件后立即调用本通道：主进程据此把窗口就绪前
+// 缓冲的启动日志（预设加载、硬件探测摘要、启动失败原因等）重放进日志面板。
+handleTrusted(IPC_CHANNELS.APP_RENDERER_READY, () => {
+  flushPanelLogBacklog()
+  return { ok: true }
+})
 
 transcodeService.registerLogSink((record) => {
   forwardLogToPanel(record?.level, record?.tag, record?.message)
@@ -174,7 +220,19 @@ function handleTrusted(channel: string, handler: (...args: never[]) => unknown) 
     if (!isTrustedSender(event)) {
       throw new Error("Untrusted IPC sender")
     }
-    return toSerializable(await (handler as (...a: unknown[]) => unknown)(...args))
+    try {
+      return toSerializable(await (handler as (...a: unknown[]) => unknown)(...args))
+    } catch (error) {
+      // IPC handler 的拒绝此前只出现在渲染层 console：预设加载失败这类主进程
+      // 侧故障在 GUI 日志面板完全无痕。这里统一留痕后原样 rethrow，
+      // 渲染层收到的仍是原来的 rejection（不改变任何调用方的错误处理）。
+      forwardLogToPanel(
+        "ERROR",
+        "ipc",
+        `${channel}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+      throw error
+    }
   })
 }
 
@@ -611,6 +669,20 @@ app.whenReady()
   .catch((error) => {
     startupLog(`app ready error: ${error.stack || error}`)
     console.error(error)
+    const message = error instanceof Error ? error.message : String(error)
+    // 启动失败必须让用户看见：错误进日志面板背板（窗口创建后重放），
+    // 并把窗口建出来——失败的子步骤（如预设加载）在渲染层下次调 IPC 时会重试
+    // （presetsLoaded 未置位），UI 拿到一个能看错误详情的界面远好于无窗假死。
+    forwardLogToPanel("ERROR", "main", `应用启动初始化失败: ${message}`)
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow()
+    } catch (windowError) {
+      startupLog(`createWindow after ready-error failed: ${String(windowError)}`)
+    }
+    dialog.showErrorBox(
+      "FFConv GUI 启动失败",
+      `${message}\n\n详情见应用「运行日志」面板（菜单 视图 → 运行日志面板，Ctrl+L）。`,
+    )
   })
 
 app.on("window-all-closed", () => {

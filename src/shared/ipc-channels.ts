@@ -24,6 +24,8 @@ export type MenuAction = (typeof MENU_ACTIONS)[keyof typeof MENU_ACTIONS]
 
 export const IPC_CHANNELS = {
   APP_GET_VERSION: "app:get-version",
+  /** 渲染层订阅完引擎事件后上报就绪；主进程据此重放启动期缓冲的面板日志 */
+  APP_RENDERER_READY: "app:renderer-ready",
   ENV_GET: "env:get",
   ENV_GET_PRESETS: "env:get-presets",
   DIALOG_SELECT_FILES: "dialog:select-files",

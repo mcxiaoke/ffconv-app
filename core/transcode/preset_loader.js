@@ -230,21 +230,30 @@ export async function loadPresetsFromYaml(customPath = null, base = {}) {
 /**
  * 分层加载全部存在的预设层（低 → 高优先级）：
  *   1. 包内 presets/default.yaml（内置层，总是存在）
- *   2. ~/.mediac/presets.yaml|yml（用户全局层）
- *   3. cwd/presets.yaml|yml（项目局部层）
+ *   2. extraSearchPaths（宿主注入的候选层，如 Electron 打包后的
+ *      <resources>/presets/default.yaml —— core 经 import.meta.url 定位的
+ *      DEFAULT_PRESET_PATH 在打包布局下指向 asar 内不存在的路径，必须由
+ *      宿主补上真实存在的随包资源；置于用户层之前，用户层仍可覆盖）
+ *   3. ~/.mediac/presets.yaml|yml（用户全局层）
+ *   4. cwd/presets.yaml|yml（项目局部层）
  * 指定 customPath 时只加载该单文件（测试/调试用，不走分层）。
  *
+ * @param {string|null} customPath 单文件路径（仅加载该文件）
+ * @param {{extraSearchPaths?: string[]}} [options] 宿主注入的额外候选层（打包资源）
  * @returns {Promise<Array<{path: string, presets: Object}>>}
  */
-export async function loadPresetLayers(customPath = null) {
+export async function loadPresetLayers(customPath = null, options = {}) {
     const yaml = await loadYamlParser()
     if (!yaml) {
         return []
     }
     const layers = []
+    const extraPaths = Array.isArray(options.extraSearchPaths)
+        ? options.extraSearchPaths.filter((p) => typeof p === "string" && p.length > 0)
+        : []
     const paths = customPath
         ? [path.resolve(customPath)]
-        : [DEFAULT_PRESET_PATH, ...USER_SEARCH_PATHS]
+        : [DEFAULT_PRESET_PATH, ...extraPaths, ...USER_SEARCH_PATHS]
     // 逐层累积 base：后加载层（优先级更高）的 `extends` 可以解析到先加载层
     // （含内置 default.yaml 与 `_base_*` 继承基类）的预设名。
     let base = {}

@@ -1,7 +1,11 @@
 import { app } from "electron"
 import { execFileSync, execFile } from "node:child_process"
+import { copyFileSync, existsSync } from "node:fs"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
+// ⚠️ 必须第一个 import：app.name 决定 userData 目录，必须先于本模块构造器中的
+// getPath("userData") 生效（见 app-identity.ts 注释）
+import "./app-identity.js"
 import {
   addLogSink,
   codecFamilyOfPreset,
@@ -374,6 +378,7 @@ class DesktopTranscodeService {
   }
 
   async initialize() {
+    this.migrateLegacyUserData()
     await Promise.all([
       this.manifest.recoverStaleTasks(),
       this.whitelist.loadAuthorizedPaths(),
@@ -382,6 +387,34 @@ class DesktopTranscodeService {
     // 崩溃语义：上次运行中被中断的项降级为 interrupted（绝不自动重跑，见 D5）
     this.queue.markRunningInterrupted()
     this.restoreQueueIntoStaging()
+  }
+
+  /**
+   * 一次性迁移：把改名前（app.name 取 package.json name "ffconv-gui"）散落在
+   * %AppData%/ffconv-gui 的持久化文件搬到现行 %AppData%/FFConv GUI。
+   * 只搬目标侧缺失的文件（绝不覆盖现行数据），搬完不删旧目录（用户可自行清理）。
+   */
+  private migrateLegacyUserData(): void {
+    const legacyNames = ["ffconv-gui"] as const
+    const fileNames = ["queue.json", "authorized-paths.json", "active-tasks.json"] as const
+    const currentDir = app.getPath("userData")
+    const appDataDir = app.getPath("appData")
+    for (const legacyName of legacyNames) {
+      if (legacyName === app.name) continue
+      const legacyDir = path.join(appDataDir, legacyName)
+      if (!existsSync(legacyDir)) continue
+      for (const fileName of fileNames) {
+        const dest = path.join(currentDir, fileName)
+        const src = path.join(legacyDir, fileName)
+        if (existsSync(dest) || !existsSync(src)) continue
+        try {
+          copyFileSync(src, dest)
+          console.warn(`[ffmpeg-service] migrated legacy userData file: ${src} -> ${dest}`)
+        } catch (error) {
+          console.warn(`[ffmpeg-service] failed to migrate ${src}: ${String(error)}`)
+        }
+      }
+    }
   }
 
   /** 将用户/配置传入的 jobs 规范化到 [1, MAX_CONCURRENCY] */

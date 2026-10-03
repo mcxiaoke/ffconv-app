@@ -359,6 +359,8 @@ export interface DesktopApi {
   clearStagedInputs(): Promise<{ ok: boolean }>
   removeStagedInputs(paths: string[]): Promise<{ removed: number; totalCount: number }>
   getAppVersion(): Promise<string>
+  /** 渲染层就绪信号：订阅完引擎事件后调用，主进程据此重放启动期缓冲的面板日志 */
+  signalReady(): Promise<{ ok: boolean }>
   getEnvironment(): Promise<EnvironmentSummary>
   /** 轻量预设目录（不含硬件探测），启动时优先调用 */
   getPresetCatalog(): Promise<PresetCatalog>

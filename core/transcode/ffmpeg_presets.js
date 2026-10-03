@@ -196,10 +196,12 @@ function isAudioExtract(preset) {
  * 同名覆盖必须显式 `_override: true`，否则 warn 跳过（P0-1 修复）。
  *
  * @param {string} customPath - 自定义 YAML 文件路径（仅加载该文件，不走分层）
+ * @param {{extraSearchPaths?: string[]}} [options] - 宿主注入的额外候选层
+ *   （Electron 打包后随包资源目录，见 loadPresetLayers 注释）
  * @returns {Promise<void>}
  */
-async function initPresetsAsync(customPath = null) {
-    const layers = await loadPresetLayers(customPath)
+async function initPresetsAsync(customPath = null, options = {}) {
+    const layers = await loadPresetLayers(customPath, options)
     let merged = new Map()
     for (const layer of layers) {
         merged = mergePresets(merged, layer)

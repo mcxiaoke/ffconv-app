@@ -218,16 +218,33 @@ export class FfmpegEnvironment {
     // 「**只**加载这一个文件」，那样 USER_SEARCH_PATHS（~/.mediac/presets.yaml、
     // cwd/presets.yaml）永远用不上——GUI 用户在用户层加的预设/覆盖会被静默忽略。
     // 不传 customPath 才会走完整分层。
-    await presets.initPresetsAsync()
+    //
+    // extraSearchPaths：打包后 core/ 内联进 asar，preset_loader 基于 import.meta.url
+    // 定位的 DEFAULT_PRESET_PATH 指向 app.asar/presets/（不存在——presets 走
+    // extraResources 落在 asar 外的 <resources>/presets/）。core 不得依赖 electron，
+    // 因此由宿主把随包资源路径注入为候选层（优先级仍低于用户层）。
+    // 开发态该路径不存在，pathExistsSync 跳过，行为不变。
+    const bundledPresetPath = path.join(process.resourcesPath, "presets", "default.yaml")
+    try {
+      await presets.initPresetsAsync(undefined, { extraSearchPaths: [bundledPresetPath] })
+    } finally {
+      // 无论成败都留痕：预设加载是启动链路最脆的一环（打包布局/文件缺失），
+      // 没有这行日志时「下拉为空」无从排查（ StartupLog 落 logs/ffconv-gui-startup.log）
+      logStartup(
+        `presets init: bundled candidate=${bundledPresetPath} exists=${existsSync(bundledPresetPath)}`,
+      )
+    }
     this.presetsLoaded = true
-    if (!presets.getAllNames().length) {
+    const presetCount = presets.getAllNames().length
+    if (presetCount === 0) {
       const presetPath = this.resolvePresetPath()
       throw new Error(
         presetPath
           ? `FFmpeg 预设解析失败：已找到 ${presetPath}，但未解析出任何预设`
-          : "FFmpeg 内置预设文件 default.yaml 未找到",
+          : `FFmpeg 内置预设文件 default.yaml 未找到（已尝试候选：${bundledPresetPath}）`,
       )
     }
+    logStartup(`presets loaded: ${presetCount} preset(s)`)
   }
 
   /** 公开预设列表（供 getSummary 与轻量通道共用） */

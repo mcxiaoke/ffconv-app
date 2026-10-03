@@ -537,6 +537,10 @@ onMounted(async () => {
   // 处理函数只依赖 planStore/logStore（模块级单例）与 window.api，提前订阅安全。
   subscribeEngineEvents()
 
+  // 上报渲染层就绪：主进程据此把窗口就绪前缓冲的启动日志（预设加载失败等）
+  // 重放进日志面板。必须在订阅引擎事件**之后**调用，否则重放的日志会丢。
+  void window.api?.signalReady?.().catch(() => undefined)
+
   // Initialize theme: default to light
   const savedTheme = localStorage.getItem("mediac_theme") || "light"
   document.documentElement.setAttribute("data-theme", savedTheme)
