@@ -24,13 +24,20 @@ function onDragLeave(e: DragEvent) {
 }
 
 function onDragOver(e: DragEvent) {
+  // 只对文件拖放 preventDefault（允许 drop）：放行文本拖放，避免把任意内容
+  // 拖进窗口也被当成「接受文件」。非文件拖放不会进入 drop 逻辑。
+  if (e.dataTransfer && !e.dataTransfer.types.includes("Files")) return
   e.preventDefault()
+}
+
+function resetDragState() {
+  dragCounter = 0
+  isDragging.value = false
 }
 
 async function onDrop(e: DragEvent) {
   e.preventDefault()
-  dragCounter = 0
-  isDragging.value = false
+  resetDragState()
   const files = Array.from(e.dataTransfer?.files || [])
   const paths = files
     .map((file) => {
@@ -47,11 +54,26 @@ async function onDrop(e: DragEvent) {
   }
 }
 
+/**
+ * capture 阶段的 window drop 监听：先于任何目标元素 handler 执行。
+ *
+ * ⚠️ 此前遮罩复位只挂在 window 的冒泡 drop 上，而左侧 dropzone 用
+ * `@drop.stop="handleDrop"` 截断了冒泡——drop 落在 dropzone 里时本监听不执行，
+ * Chromium 不保证 drop 后补发 dragleave，dragCounter 停在 ≥1，
+ * 全屏半透明遮罩常驻（视觉上像应用卡死）。capture 监听不受 .stop 影响。
+ */
+function onWindowDropCapture() {
+  resetDragState()
+}
+
 onMounted(() => {
   window.addEventListener("dragenter", onDragEnter)
   window.addEventListener("dragleave", onDragLeave)
   window.addEventListener("dragover", onDragOver)
   window.addEventListener("drop", onDrop)
+  window.addEventListener("drop", onWindowDropCapture, true)
+  // 拖拽中断（Esc / 松手在窗口外等）的兜底复位；外部文件拖入时本窗口不会收到
+  window.addEventListener("dragend", resetDragState)
 })
 
 onUnmounted(() => {
@@ -59,6 +81,8 @@ onUnmounted(() => {
   window.removeEventListener("dragleave", onDragLeave)
   window.removeEventListener("dragover", onDragOver)
   window.removeEventListener("drop", onDrop)
+  window.removeEventListener("drop", onWindowDropCapture, true)
+  window.removeEventListener("dragend", resetDragState)
 })
 </script>
 

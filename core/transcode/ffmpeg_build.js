@@ -592,6 +592,38 @@ function fallbackAudioEncoder(codecOrArgs, encoders, strict = false) {
 }
 
 /**
+ * 单值输出选项重复告警（一次性）。
+ *
+ * `-movflags` 等 AVOption 是**单值选项**：同一命令出现两次时后者整体覆盖前者，
+ * 例如 `-movflags +faststart -movflags use_metadata_tags` 实测 faststart 静默失效
+ * （moov 落在文件尾）。正确写法是把 flags 合并在一个值里：`+faststart+use_metadata_tags`。
+ * 只告警已知会互相覆盖的单值选项，不碰 `-map`/`-metadata` 这类合法重复项。
+ */
+const SINGLE_VALUE_OUTPUT_OPTIONS = new Set(["-movflags"])
+const warnedDupOutputOptions = new WeakSet()
+
+function warnDuplicateOutputOptions(tempPreset, tokens) {
+    if (warnedDupOutputOptions.has(tempPreset)) return
+    const counts = new Map()
+    for (const t of tokens) {
+        if (!SINGLE_VALUE_OUTPUT_OPTIONS.has(t)) continue
+        counts.set(t, (counts.get(t) || 0) + 1)
+    }
+    for (const [flag, count] of counts) {
+        if (count > 1) {
+            warnedDupOutputOptions.add(tempPreset)
+            log.logWarn(
+                "FFConv",
+                `outputArgs contains ${count} "${flag}" options; for single-value AVOptions the last one overrides the earlier ones ` +
+                    `(e.g. "${flag} +faststart" followed by "${flag} use_metadata_tags" silently loses faststart). ` +
+                    `Merge flags into one value: "${flag} +faststart+use_metadata_tags".`,
+            )
+            return
+        }
+    }
+}
+
+/**
  * 构建流选择与其它输出参数（streamArgs / outputArgs，顺序重要）
  * @param {Object} tempPreset - 预设副本
  * @returns {string[]} 流与输出参数数组
@@ -613,7 +645,9 @@ function buildStreamArgs(tempPreset) {
     }
     // 输出参数在最后，在输出文件前面，顺序重要
     if (tempPreset.outputArgs?.length > 0) {
-        middleArgs.push(...tempPreset.outputArgs.split(" "))
+        const outputTokens = tempPreset.outputArgs.split(" ")
+        warnDuplicateOutputOptions(tempPreset, outputTokens)
+        middleArgs.push(...outputTokens)
     }
     return middleArgs
 }

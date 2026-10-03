@@ -55,13 +55,13 @@ const progressPercent = computed(() => {
 
 const overallStat = computed(() => {
   // 分母用本轮实际执行的任务子集：部分执行时 "2 / 3" 而非误导性的 "2 / 10"
-  const executed = planStore.executedTasks.length
-  const denom = executed > 0 ? executed : planStore.tasks.length
+  const executed = planStore.executedTasks
+  const denom = executed.length > 0 ? executed.length : planStore.tasks.length
   if (denom === 0) return "0 / 0"
-  // ⚠️ 分子口径必须与 overallPercent 一致：进度条把 skipped 计入「已完成」
-  // （FINISHED_STATUSES = success + skipped），此前这里只数 success，
-  // 于是 2 成功 + 1 跳过时进度条显示 100%、状态「已完成」，计数却是「2 / 3」。
-  const done = planStore.tasks.filter(
+  // ⚠️ 分子口径必须与分母一致：都按 executedTasks 统计（FINISHED = success + skipped）。
+  // 此前分子用全量 tasks——先跑 10 个成功 5 个、再改配置只勾选 2 个继续跑时，
+  // 会出现 7 / 2 这类分子大于分母的自相矛盾计数。
+  const done = executed.filter(
     (t) => t.status === "success" || t.status === "skipped",
   ).length
   return `${done} / ${denom}`
