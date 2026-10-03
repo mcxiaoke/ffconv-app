@@ -5,6 +5,7 @@ import { useLogStore } from "../stores/log"
 import { useEnvStore } from "../stores/env"
 import { useToast } from "../composables/useToast"
 import { useFocusTrap } from "../composables/useFocusTrap"
+import type { LogLevelName } from "../../../shared/contracts"
 
 const props = defineProps<{
   show: boolean
@@ -25,12 +26,41 @@ useFocusTrap(modalRef, computed(() => props.show))
 
 const currentTheme = ref(document.documentElement.getAttribute("data-theme") || "light")
 
-// 组件常驻挂载（仅内层 v-if 切换），切主题后再次打开需重读，否则显示旧值
+/**
+ * 打开弹窗时快照 adv / logLevel，关闭时若不是「保存设置」路径则回滚。
+ *
+ * 这些开关此前 v-model 直连 store 且被 400ms 防抖 watcher 立即写盘，
+ * 「取消」只 emit('close') 不做任何还原——误开「转码后删除源文件」后点取消，
+ * 开关仍是开的状态。回滚触发 watcher 会把原值再落一次盘，终态与磁盘一致。
+ * 外部工具路径本就走「先校验后落 localStorage」的草稿流程，无需快照。
+ */
+type AdvSnapshot = ReturnType<typeof useConfigStore>["adv"]
+let advSnapshot: AdvSnapshot | null = null
+let logLevelSnapshot: LogLevelName | null = null
+let settingsSaved = false
+
+function snapshotForCancel(): void {
+  advSnapshot = { ...configStore.adv }
+  logLevelSnapshot = configStore.logLevel
+  settingsSaved = false
+}
+
+function rollbackIfCancelled(): void {
+  if (settingsSaved || !advSnapshot) return
+  configStore.adv = { ...advSnapshot }
+  if (logLevelSnapshot) configStore.logLevel = logLevelSnapshot
+}
+
+// 组件常驻挂载（仅内层 v-if 切换），切主题后再次打开需重读，否则显示旧值。
+// 关闭路径（取消/遮罩/Esc/右上角 ×）统一在此回滚，避免遗漏某个关闭入口。
 watch(
   () => props.show,
   (visible) => {
     if (visible) {
       currentTheme.value = document.documentElement.getAttribute("data-theme") || "light"
+      snapshotForCancel()
+    } else {
+      rollbackIfCancelled()
     }
   },
 )
@@ -96,6 +126,8 @@ async function saveSettings() {
   if (mediainfoVal) localStorage.setItem("mediac_tool_mediainfo", mediainfoVal)
   else localStorage.removeItem("mediac_tool_mediainfo")
 
+  // 标记为保存路径：关闭时不再回滚 adv / logLevel
+  settingsSaved = true
   emit("close")
 }
 

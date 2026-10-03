@@ -270,7 +270,11 @@ async function createPlan() {
 async function startExecution(options?: { dryRun?: boolean }) {
   // 入口自检：菜单 F5 与页面按钮共用此函数，无守卫会把运行中的会话打成 FAILED
   if (isBusy()) return
-  if (planStore.tasks.length === 0 && configStore.inputs.length === 0) return
+  if (planStore.tasks.length === 0 && configStore.inputs.length === 0) {
+    // 静默 return 会让用户以为按钮坏了：给一条可查的反馈
+    toast.push("没有可转码的内容：请先添加媒体文件或目录", "warn")
+    return
+  }
 
   // 1. 记忆当前用户明确勾选的文件绝对路径
   const knownPreviousPaths = new Set(planStore.tasks.map((t) => t.path))
@@ -281,11 +285,14 @@ async function startExecution(options?: { dryRun?: boolean }) {
   // 2. 若存在未扫描的文件、设置已改动（STALE/hasStaged）或尚未扫描，隐式触发扫描。
   //    pendingStale：运行期间被改动的设置（运行中不能立刻标 STALE），也必须触发重新扫描，
   //    否则会复用主进程冻结的旧 argv，出现「配置已改、实际执行旧参数」。
+  //    tasks 为空也必须重扫：removeTask 移光任务后 planSnapshot 仍在、状态回 IDLE，
+  //    此前四个条件都不满足 → 直接走到底部的空执行死路径，F5 静默无反应。
   if (
     planStore.hasStaged ||
     planStore.status === "STALE" ||
     planStore.pendingStale ||
-    !planStore.planSnapshot
+    !planStore.planSnapshot ||
+    planStore.tasks.length === 0
   ) {
     try {
       await createPlanInternal()
@@ -353,6 +360,13 @@ async function startExecution(options?: { dryRun?: boolean }) {
       }
       return
     }
+    // 勾选为空且没有失败任务可重试：不能静默返回（用户以为按钮坏了）
+    toast.push("没有可执行的转码任务：请先勾选任务，或重新扫描后再开始", "warn")
+    logStore.append({
+      level: "WARN",
+      message: "开始转码被跳过：当前没有可执行的任务（可能已全部完成或未勾选）",
+      timestamp: new Date().toLocaleTimeString(),
+    })
     return
   }
 

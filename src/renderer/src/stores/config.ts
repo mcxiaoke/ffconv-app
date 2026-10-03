@@ -258,9 +258,28 @@ export const useConfigStore = defineStore("config", () => {
     hydrated.value = true
   }
 
+  /**
+   * 主进程回写应用中：抑制持久化 watcher 的一次触发。
+   * Vue 的 nextTick 回调在 pre-watcher 队列之后执行，足以覆盖本次批量赋值。
+   */
+  let applyingRemote = false
+
   function persistNow(): Promise<void> | undefined {
     return window.api?.saveSettings?.(snapshotForPersist())?.then(
-      () => undefined,
+      (merged) => {
+        // 主进程是唯一安全门，会 clamp（jobs → [1,8]、dimension → [0,16384] 等）。
+        // 此前收窄结果被直接丢弃：界面显示 99、磁盘是 8，且每次改动都会把 99
+        // 再写回去，用户无从察觉。回填本地让界面与磁盘一致。
+        if (!merged) return
+        applyingRemote = true
+        try {
+          applySettings(merged)
+        } finally {
+          void nextTick().then(() => {
+            applyingRemote = false
+          })
+        }
+      },
       (err: unknown) => {
         console.error("Failed to persist settings:", err)
       },
@@ -269,6 +288,7 @@ export const useConfigStore = defineStore("config", () => {
 
   function schedulePersist() {
     if (!hydrated.value) return
+    if (applyingRemote) return
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
