@@ -1,8 +1,9 @@
-## mediac ffmpeg 使用文档与注意事项
+## FFmpeg 转码使用文档与注意事项
 
 > 适用版本：v2.0.0（S-4 硬件分层重构、ffmpeg 参数定稿之后）。
-> 命令：`mediac ffmpeg <input> [options]`，别名 `transcode` / `aconv` / `vconv` / `avconv`。
-> 描述：使用 ffmpeg 转换音频或视频文件。
+> 原来的 `mediac ffmpeg` CLI 子命令已随仓库收敛为 Electron GUI（FFConv）而删除；
+> 本文档保留的**参数语义、预设定义与引擎行为说明仍然准确**，调用入口改为
+> GUI（选项经 typed IPC 进入 `core/transcode`，字段一一对应下文表格）。
 >
 > 本文反映**当前代码实际行为**，与旧版（硬编码预设、`--arg` 位置标记、`--video-args` 整体替换）有重要差异，迁移时请先读「注意事项」一节。
 
@@ -147,79 +148,64 @@ mediac ffmpeg ./video.mp4 --preset audio_extract --doit
 
 ### 4. 内置预设
 
-以下为 `presets/default.yaml` 注册的全部可用预设（`_base_*` 为继承模板，不对外注册）。质量值为 CRF 基准（h264/hevc 0–51、VP9 0–63，越小质量越高），码率是"上限参考"（受 §5.4"不超源"约束）。
+以下为 `presets/default.yaml` 注册的全部可用预设（`_base_*` 为继承模板，不对外注册）。质量值为 CRF 基准（h264/hevc 0–51、VP9 0–63，越小质量越高），码率列是预设声明的 `maxBitrate` **峰值封顶**（实际码率还受 §5.4"不超源"与分辨率缩放约束），音频列是 `audioBitrate`。
 
-**H.264 / AVC**
+**H.264 / AVC**（输出 `.mp4`）
 
-| 预设 | 长边 | 质量 | 码率 | 音频 |
+| 预设 | 长边 | 质量 | 峰值码率 | 音频 |
 | ---- | ---- | ---- | ---- | ---- |
-| `h264_4ku` | 3840 | 22 | 20M | 256k |
-| `h264_4k` | 3840 | 23 | 15M | 256k |
-| `h264_4kl` | 3840 | 25 | 10M | 192k |
-| `h264_2k` | 1920 | 24 | 4M | 192k |
-| `h264_2km` | 1920 | 26 | 2M | 128k |
-| `h264_2kl` | 1920 | 26 | 1.6M | 96k |
+| `h264_2kh` | 1920 | 20 | 12M | 256k |
+| `h264_2k` | 1920 | 23 | 8M | 192k |
+| `h264_2kl` | 1920 | 26 | 5M | 128k |
+| `h264_4kh` | 3840 | 22 | 22M | 256k |
+| `h264_4k` | 3840 | 25 | 16M | 192k |
+| `h264_4kl` | 3840 | 28 | 10M | 128k |
 
-**H.265 / HEVC**
+**H.265 / HEVC**（输出 `.mp4`）
 
-| 预设 | 长边 | 质量 | 码率 | 备注 |
+| 预设 | 长边 | 质量 | 峰值码率 | 音频 | 备注 |
+| ---- | ---- | ---- | ---- | ---- | ---- |
+| `hevc_2kh` | 1920 | 20 | 12M | 256k | 收藏级 |
+| `hevc_2k` | 1920 | 23 | 8M | 192k | 默认推荐 |
+| `hevc_2kl` | 1920 | 26 | 5M | 128k | 轻量分享 |
+| `hevc_2kt` | 1920 | 29 | 3M | 96k | 极限防爆盘，锁定 30fps |
+| `hevc_4kh` | 3840 | 22 | 20M | 256k | |
+| `hevc_4k` | 3840 | 25 | 14M | 256k | |
+| `hevc_4kl` | 3840 | 28 | 9M | 192k | |
+
+**AV1**（输出 `.mp4`；编码器按硬件层选：cuda/d3d→`av1_nvenc`、qsv→`av1_qsv`、amf→`av1_amf`、CPU→`libsvtav1` 兜底）
+
+| 预设 | 长边 | 质量 | 峰值码率 | 音频 | 备注 |
+| ---- | ---- | ---- | ---- | ---- | ---- |
+| `av1_2kh` | 1920 | 28 | 10M | 256k | 收藏级 |
+| `av1_2k` | 1920 | 33 | 6M | 192k | 现代硬编主推默认 |
+| `av1_2kl` | 1920 | 38 | 3.5M | 128k | 便携分享 |
+| `av1_2kt` | 1920 | 42 | 2M | 96k | 极限体积分享 |
+| `av1_720p` | 1280 | 34 | 3M | 128k | 移动端/微信黄金档 |
+| `av1_4kh` | 3840 | 30 | 18M | 256k | |
+| `av1_4k` | 3840 | 35 | 12M | 192k | |
+| `av1_4kl` | 3840 | 40 | 7M | 128k | |
+
+**VP9**（输出 `.webm` + `libopus` 音频；NVENC/AMF 无 VP9 编码 → 恒走 CPU `libvpx-vp9`；CRF 0–63；`smartBitrate: false`）
+
+| 预设 | 长边 | CRF | 音频 | 备注 |
 | ---- | ---- | ---- | ---- | ---- |
-| `hevc_4ku` | 3840 | 20 | 16M | |
-| `hevc_4k` | 3840 | 22 | 10M | |
-| `hevc_4kl` | 3840 | 24 | 6M | |
-| `hevc_4kt` | 3840 | 26 | 4M | |
-| `hevc_2ku` | 1920 | 22 | 8M | |
-| `hevc_2kh` | 1920 | 22 | 6M | |
-| `hevc_2k` | 1920 | 24 | 4M | 默认推荐 |
-| `hevc_2km` | 1920 | 26 | 2M | |
-| `hevc_2kl` | 1920 | 26 | 1.6M | |
-| `hevc_2kt` | 1920 | 28 | 1.2M | 关智能码率，30fps |
-| `hevc_preview` | 720 | 35 | 800k | 快速预览，15fps |
+| `vp9_2k` | 1920 | 36 | 192k | 默认推荐 |
+| `vp9_4k` | 3840 | 38 | 192k | |
 
-**AV1**（编码器按硬件层选：NVENC→`av1_nvenc`、QSV→`av1_qsv`、AMF→`av1_amf`、CPU→按构建在 `libsvtav1`/`libaom-av1`/`librav1e` 中取存在的）
+**音频预设**（输出 `.m4a`；`audio_extract` 的 `streamArgs` 为 `-vn -map 0:a:0` 直拷流）
 
-| 预设 | 长边 | 质量 | 码率 |
-| ---- | ---- | ---- | ---- |
-| `av1_4ku` | 3840 | 24 | 25M |
-| `av1_4k` | 3840 | 26 | 15M |
-| `av1_4kl` | 3840 | 28 | 8M |
-| `av1_2ku` | 1920 | 24 | 8M |
-| `av1_2kh` | 1920 | 26 | 6M |
-| `av1_2k` | 1920 | 28 | 4M |
-| `av1_2km` | 1920 | 30 | 2M |
-| `av1_2kl` | 1920 | 32 | 1.6M |
-
-**VP9**（输出 `.webm` + `libopus` 音频；NVENC/AMF 无 VP9 编码 → 恒走 CPU `libvpx-vp9`；CRF 0–63）
-
-| 预设 | 长边 | CRF | 音频 |
-| ---- | ---- | ---- | ---- |
-| `vp9_4k` | 3840 | 38 | 256k |
-| `vp9_2ku` | 1920 | 30 | 256k |
-| `vp9_2kh` | 1920 | 34 | 192k |
-| `vp9_2k` | 1920 | 38 | 192k |
-| `vp9_2km` | 1920 | 42 | 128k |
-| `vp9_2kl` | 1920 | 46 | 128k |
-
-**场景预设**
-
-| 预设 | 长边 | 说明 |
+| 预设 | 声明码率 | 说明 |
 | ---- | ---- | ---- |
-| `web_720p` | 1280 | 网页嵌入，720p H.264，高兼容低码率 |
-| `social_1080p` | 1920 | 社交媒体，1080p H.264，质量与体积平衡 |
-| `archive_4k` | 3840 | 长期归档，4K HEVC，高质量低码率 |
+| `audio_extract` | — | 从视频提取音频（`audioCodec: copy`，流复制不重编码） |
+| `aac_high` | 256k | AAC 256k |
+| `aac_medium` | 192k | AAC 192k |
+| `aac_low` | 128k | AAC 128k |
+| `aac_he` | 96k | AAC 96k（名字沿用旧规范，实际是普通 AAC 而非 HE-AAC） |
+| `aac_voice` | 48k | AAC 48k 人声（唯一显式 `smartBitrate: false` 的音频预设） |
 
-**音频预设**
-
-| 预设 | 输出 | 说明 |
-| ---- | ---- | ---- |
-| `audio_extract` | `.m4a` | 从视频提取音频（aac 源直拷，否则重编码） |
-| `aac_high` | `.m4a` | AAC CBR 256k |
-| `aac_medium` | `.m4a` | AAC CBR 192k |
-| `aac_low` | `.m4a` | AAC CBR 128k |
-| `aac_he` | `.m4a` | HE-AAC，96k 低码率 |
-| `aac_voice` | `.m4a` | AAC，48k 人声 |
-
-> 内置 AAC 预设默认使用 `libfdk_aac`（需 nonfree 构建）。若本机 ffmpeg 无该编码器，运行时会**自动降级到原生 `aac`**（严格模式下改为跳过该文件），详见 §9.7。
+> 内置 AAC 预设一律使用**原生 `aac` 编码器**，不依赖 nonfree 构建。`libfdk_aac` → `aac`
+> 的自动降级链只对**用户自定义预设显式声明 `libfdk_aac`** 时生效，见 §9.7。
 
 ---
 
@@ -246,7 +232,7 @@ mediac ffmpeg ./video.mp4 --preset audio_extract --doit
 关键分工：
 - **preset 只声明"输出什么 codec 族 + 质量/码率"**（`videoCodecFamily`），不关心硬件实现。
 - **tier 决定"用哪个具体编码器 + 该编码器专属参数"**（见 `ENCODER_MATRIX`）。
-- 二者组合后，质量参数再按编码器实现分发（NVENC 用 `-rc vbr -tune hq -rc-lookahead 20` 再叠加 `-cq/-b:v`，QSV 用 `-global_quality`/ICQ，CPU 用 `-crf -preset`，libvpx-vp9 纯 CRF 必带 `-b:v 0` 且禁带 `-maxrate/-bufsize`）。`-rc-lookahead` 除了改善码率分配，还会**启用 NVENC 的场景自适应关键帧与自适应 B 帧决策**（`h264_nvenc` 帮助中 `-no-scenecut`/`-b_adapt` 明确以"lookahead 开启"为前提），故 CQ 模式下亦有实义。
+- 二者组合后，质量参数再按编码器实现分发（NVENC 用 `-rc vbr -tune hq -rc-lookahead 30` 再叠加 `-cq/-b:v`，QSV 用 `-global_quality`/ICQ，CPU 用 `-crf -preset`，libvpx-vp9 纯 CRF 必带 `-b:v 0` 且禁带 `-maxrate/-bufsize`）。`-rc-lookahead` 除了改善码率分配，还会**启用 NVENC 的场景自适应关键帧与自适应 B 帧决策**（`h264_nvenc` 帮助中 `-no-scenecut`/`-b_adapt` 明确以"lookahead 开启"为前提），故 CQ 模式下亦有实义。
 
 > **编码器族由 preset 决定，与输入位深无关。** 输入位深只影响"哪一层能解码"。历史上"10bit 输入就切 hevc"是 bug，已纠正。
 
@@ -359,7 +345,7 @@ S-4 重构移除了 `--video-args` / `--audio-args` / `--filters` / `--filter-co
 
 **9.6 `--dimension` / 码率 / 帧率都"只降不升"。** 不会放大分辨率、不会把码率提到超过源、不会把帧率提到超过源。想强制更高码率需理解这一护栏。
 
-**9.7 AAC 依赖 nonfree 构建。** 内置 AAC 预设用 `libfdk_aac`。本机 ffmpeg 若无该编码器：普通模式自动降级到原生 `aac`；`--strict` 模式不降级、直接跳过该文件（记 `Skip[StrictCodec]`）。用 `FFMPEG_PATH`/`FFMPEG_BINARY` 指定带 fdk 的构建可避免降级。
+**9.7 AAC 编码器与降级链。** 内置 AAC 预设使用**原生 `aac` 编码器**，任何 ffmpeg 构建都可用，无 nonfree 依赖。仅当**用户自定义预设**显式声明 `libfdk_aac` 时：本机 ffmpeg 若无该编码器（libfdk 是 nonfree-only，多数构建没有），普通模式自动降级到原生 `aac`；`--strict` 模式不降级、直接跳过该文件（记 `Skip[StrictCodec]`）。用 `FFMPEG_PATH`/`FFMPEG_BINARY` 指定带 fdk 的构建可避免降级。
 
 **9.8 `--strict` 会改变失败语义。** 禁用硬件层回退 CPU、编码器降级、失败重试、10bit 软解规避；任何"本机软硬件不支持"的文件按**跳过+warn**处理（不标失败、不重试、不进失败汇总），结束时汇总跳过总数。适合要"确定性结果、不静默降级"的批处理。
 
@@ -375,7 +361,7 @@ S-4 重构移除了 `--video-args` / `--audio-args` / `--filters` / `--filter-co
 
 **9.14 按类型过滤输入 + 坏文件跳过。** 视频预设只处理含视频轨的文件、音频预设只处理音频；`ffprobe` 读不到时长/码率（坏格式）、时长 <1s、目标类型缺对应流等情况会 `Skip[...]` 跳过。单个坏文件不会中断整批。
 
-**9.15 字幕自动挂载。** 扫描源同目录与 `subs/` 下的 `.ass/.ssa/.srt`，**优先中文字幕**；MP4 内嵌字幕仅 `tx3g` 可转 `mov_text`，其它内嵌字幕直接 `-sn` 丢弃。外置字幕按 `-map 0:v -map 0:a -map 1` 注入并把中文轨设默认。
+**9.15 字幕自动挂载。** 扫描源同目录与 `subs/` 下的 `.ass/.ssa/.srt`，**优先中文字幕**；MP4 内嵌字幕仅 `tx3g` 可转 `mov_text`，其它内嵌字幕直接 `-sn` 丢弃。流映射用**视频流绝对序号**（`-map 0:<vidx>`，取不到序号时整组 `-map` 都不输出、交给 ffmpeg 默认选择以避开内嵌封面），并**始终带 `-map 0:a?` 保留全部音轨**：外挂字幕按 `-map 0:<vidx> -map 0:a? -map 1:0?` 注入并把中文轨设默认（只对视频预设生效，音频预设自带 `-map 0:a:0` 不参与，否则会产生重复音轨）。
 
 **9.16 VP9 / AV1 无硬编时走 CPU。** VP9 无 NVENC/AMF 编码器 → 恒 CPU `libvpx-vp9`，`.webm` 容器音频只能 `opus`/`vorbis`（内置 VP9 预设用 `libopus`）。AV1 在 CPU/通用层会按运行时探测在候选里取该构建**真实存在**的编码器，避免 `Unknown encoder`。
 
@@ -383,7 +369,7 @@ S-4 重构移除了 `--video-args` / `--audio-args` / `--filters` / `--filter-co
 
 **9.18 单位。** `--video-bitrate` / `--audio-bitrate` 为字符串码率：裸数字=bps，带 `k/m/g` 后缀按 **1000 进制**（`k`=×1000，`m`=×1e6，`g`=×1e9，大小写均可）换算为 bps，与 ffmpeg `-b:v "3M"`=3_000_000 一致；`--video-quality` / `--audio-quality` 无量纲（CRF / VBR 等级）。
 
-**9.19 CLI 与 WebUI 共用 Planner。** 相同输入、输出模式和选项会生成相同的 task 集合；空计划/全跳过计划会保留在 Plan 中并由 Engine 统一汇总。WebUI 的 `deleteSourceFiles` 请求必须同时提供 `deleteSourceConfirmed: true` 或 `autoConfirm: true`，否则 API 拒绝执行；CLI 仍使用交互确认。
+**9.19 GUI 与引擎共用 Planner。** 相同输入、输出模式和选项会生成相同的 task 集合；空计划/全跳过计划会保留在 Plan 中并由 Engine 统一汇总。「转码后删除源文件」的确认**由主进程弹原生对话框完成**：渲染层只表达意图（`deleteSourceFiles`），其传入的 `deleteSourceConfirmed` / `autoConfirm` 会在 desktop 入口被剥离，确认位置位前还有「产物存在且非空、dry-run 不删、移入回收站」护栏（见 9.9）。
 
 ---
 
@@ -404,5 +390,5 @@ S-4 重构移除了 `--video-args` / `--audio-args` / `--filters` / `--filter-co
 - 命令行到底长什么样 → 看控制台 `CMD:` 行、`FFCMD` 日志的 `Plan`/`CMD` 行，或产物 `comment` 元数据。
 - 为什么没走硬件加速 → `Plan` 行里的 `tier=` 与 `tried=[...]`、`reason=` 会说明降级路径；`hwdetect` 日志说明各层是否入场（`-hwaccels`/`-encoders`/滤镜预筛）。
 - 预设改了没生效 → 找 `PresetLoader` 的 unknown field / `_override` skipped 告警。
-- 音频莫名变成 `aac` 而非 `libfdk_aac` → 本机构建缺 fdk，见 9.7。
+- 自定义预设写了 `libfdk_aac` 但产物是 `aac` → 本机构建缺 fdk，触发了降级链，见 9.7。
 - 想复现/调试单条命令 → 从日志 `CMD` 行拷出参数，配合 `--debug` 提高 ffmpeg 日志级别再看 `[error]` 根因行。
