@@ -390,7 +390,19 @@ async function stopExecution() {
   if (planStore.status !== "RUNNING" && planStore.status !== "STOPPING") return
   planStore.status = "STOPPING"
   try {
-    await window.api.stopExecution()
+    const res = await window.api.stopExecution()
+    if (res && res.ok === false) {
+      // 主进程拒绝停止（无运行中任务/状态已收敛）：两侧状态漂移时若只留 STOPPING，
+      // isBusy() 恒真会让扫描/开始/终止全部静默失效且无自愈路径，只能重启应用。
+      // 以主进程快照为准对账，把渲染层状态拉回真实终态。
+      await reconcileExecutionStatus()
+      logStore.append({
+        level: "WARN",
+        message: `停止请求未生效：${res.message || "当前没有正在运行的转码任务"}（已按主进程状态对账）`,
+        timestamp: new Date().toLocaleTimeString(),
+      })
+      return
+    }
     logStore.append({
       level: "WARN",
       message: "已请求停止，正在结束转码…",
@@ -402,6 +414,21 @@ async function stopExecution() {
       message: `停止失败：${error instanceof Error ? error.message : String(error)}`,
       timestamp: new Date().toLocaleTimeString(),
     })
+  }
+}
+
+/** 用主进程的执行快照校正渲染层状态（ok:false / 状态疑似漂移时的自愈路径） */
+async function reconcileExecutionStatus() {
+  try {
+    const snap = await window.api?.getExecutionStatus?.()
+    if (!snap) {
+      planStore.status = "IDLE"
+      return
+    }
+    if (snap.plan) planStore.setPlan(snap.plan)
+    planStore.status = snap.status
+  } catch {
+    // 对账失败时保守起见不动状态：等 session.summary 或用户重试收敛
   }
 }
 
@@ -662,7 +689,7 @@ onMounted(async () => {
   }
 
   // Subscribe to engine IPC events
-  unsubscribeEvents = window.api.onEngineEvent(handleEngineEvent)
+  // （订阅已在 onMounted 顶部完成，此处不再重复订阅——见函数末尾说明）
 
   /**
    * 队列变更广播订阅。
@@ -677,6 +704,11 @@ onMounted(async () => {
       planStore.setQueueItems(snapshot?.items)
     })
   }
+
+  // ⚠️ 引擎事件订阅只有 onMounted 顶部 subscribeEngineEvents() 那一次。
+  // 此前这里还有第二次 `unsubscribeEvents = window.api.onEngineEvent(...)`,
+  // 它覆盖了第一次的退订句柄：每条引擎事件被处理两次（日志双写、通知双弹），
+  // 且第一个监听器永久泄漏（onUnmounted 只能摘掉第二个）。
 })
 
 onUnmounted(() => {
