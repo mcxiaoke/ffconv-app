@@ -352,22 +352,59 @@ export const usePlanStore = defineStore("plan", () => {
     return undefined
   }
 
-  function updateTaskProgress(taskId: string | undefined, percent: number, speed?: number | string) {
-    // 事件缺 taskId（异常/半截 payload）时直接忽略，避免 findIndex 用 undefined 做无意义匹配
-    if (!taskId) return
+  /**
+   * id → tasks 下标查找表。
+   * 表格渲染期对每行调 2 次 canMove/execIndex，此前 findIndex 全表扫描，
+   * 1000 任务 × 10Hz 进度事件 ≈ 每秒 2000 万次字符串比较；Map 查找降为 O(1)。
+   */
+  const taskIndexById = computed(() => {
+    const map = new Map<string, number>()
+    for (let i = 0; i < tasks.value.length; i++) map.set(tasks.value[i].id, i)
+    return map
+  })
+
+  // ---- 进度事件合并（节流） ----
+  // 进度事件以 ~10Hz 到达，每次都 [...tasks] 换引用会让整表重渲染（渲染函数全量
+  // 重跑 + keyed diff）。先写入 pendingProgress（同 id 后到覆盖先到，天然去抖），
+  // 最多每 PROGRESS_FLUSH_MS 批量应用一次；状态类/终态事件走 updateTaskStatus，
+  // 不经过本缓冲，完成/失败语义不受节流影响。
+  const PROGRESS_FLUSH_MS = 250
+  const pendingProgress = new Map<string, { percent: number; speed?: number }>()
+  let progressFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+  function flushPendingProgress() {
+    progressFlushTimer = null
+    if (pendingProgress.size === 0) return
     const list = [...tasks.value]
-    const idx = list.findIndex((t) => t.id === taskId)
-    const speedValue = normalizeSpeed(speed)
-    if (idx >= 0 && !TERMINAL_STATUSES.has(list[idx].status)) {
+    let changed = false
+    for (const [id, pending] of pendingProgress) {
+      const idx = taskIndexById.value.get(id)
+      // flush 时再次校验终态：缓冲期间任务可能已经完成/失败/被取消
+      if (idx === undefined || TERMINAL_STATUSES.has(list[idx].status)) continue
       list[idx] = {
         ...list[idx],
         status: "running",
-        progress: percent,
-        speed: speedValue ?? list[idx].speed,
+        progress: pending.percent,
+        speed: pending.speed ?? list[idx].speed,
       }
-      tasks.value = list
+      changed = true
     }
+    pendingProgress.clear()
+    if (changed) tasks.value = list
+  }
+
+  function updateTaskProgress(taskId: string | undefined, percent: number, speed?: number | string) {
+    // 事件缺 taskId（异常/半截 payload）时直接忽略
+    if (!taskId) return
+    const speedValue = normalizeSpeed(speed)
     if (speedValue !== undefined) currentSpeed.value = speedValue
+    // 终态任务不得回写 running 进度（保持原语义，入缓冲前即拦截）
+    const idx = taskIndexById.value.get(taskId)
+    if (idx === undefined || TERMINAL_STATUSES.has(tasks.value[idx].status)) return
+    pendingProgress.set(taskId, { percent, speed: speedValue })
+    if (progressFlushTimer === null) {
+      progressFlushTimer = setTimeout(flushPendingProgress, PROGRESS_FLUSH_MS)
+    }
   }
 
   function updateTaskStatus(
@@ -376,19 +413,18 @@ export const usePlanStore = defineStore("plan", () => {
     error?: string | null
   ) {
     if (!taskId) return
+    const idx = taskIndexById.value.get(taskId)
+    if (idx === undefined) return
+    // 迟到的 task.started 不得把终态任务拉回 running
+    if (TERMINAL_STATUSES.has(tasks.value[idx].status) && newStatus === "running") return
     const list = [...tasks.value]
-    const idx = list.findIndex((t) => t.id === taskId)
-    if (idx >= 0) {
-      // 迟到的 task.started 不得把终态任务拉回 running
-      if (TERMINAL_STATUSES.has(list[idx].status) && newStatus === "running") return
-      list[idx] = {
-        ...list[idx],
-        status: newStatus,
-        error: error || list[idx].error,
-        progress: newStatus === "success" ? 100 : list[idx].progress,
-      }
-      tasks.value = list
+    list[idx] = {
+      ...list[idx],
+      status: newStatus,
+      error: error || list[idx].error,
+      progress: newStatus === "success" ? 100 : list[idx].progress,
     }
+    tasks.value = list
   }
 
   /**
@@ -504,6 +540,7 @@ export const usePlanStore = defineStore("plan", () => {
     allTasksCompleted,
     isAllSelected,
     isSomeSelected,
+    taskIndexById,
     totalDuration,
     totalSize,
     stagedCount,
