@@ -124,7 +124,14 @@ function openOutputDir() {
         </span>
         <span class="exec-pct" data-testid="exec-percent">{{ progressPercent }}%</span>
       </div>
-      <div class="bar">
+      <div
+        class="bar"
+        role="progressbar"
+        aria-label="总进度"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-valuenow="progressPercent"
+      >
         <div
           class="bar-fill"
           data-testid="exec-bar-fill"

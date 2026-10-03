@@ -46,6 +46,11 @@ function handleMenuKeydown(e: KeyboardEvent) {
   if (e.key !== "Enter" && e.key !== " ") return
   const target = e.target as HTMLElement | null
   if (!target?.classList?.contains("ctx-item")) return
+  // 禁用项不受 pointer-events:none 保护（键盘激活走的是 click()），必须显式拦截
+  if (target.classList.contains("disabled")) {
+    e.preventDefault()
+    return
+  }
   e.preventDefault()
   target.click()
 }
@@ -259,7 +264,8 @@ function onClearAll() {
       class="ctx-item danger"
       :class="{ disabled: planStore.selectedIds.size === 0 || isBusy }"
       role="menuitem"
-      tabindex="0"
+      :aria-disabled="planStore.selectedIds.size === 0 || isBusy"
+      tabindex="-1"
       data-testid="ctx-remove-selected"
       @click="onRemoveSelected"
     >
@@ -273,7 +279,8 @@ function onClearAll() {
       class="ctx-item danger"
       :class="{ disabled: isBusy }"
       role="menuitem"
-      tabindex="0"
+      :aria-disabled="isBusy"
+      tabindex="-1"
       data-testid="ctx-clear-all"
       @click="onClearAll"
     >

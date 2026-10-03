@@ -100,6 +100,11 @@ const statusFilter = ref<string>("all")
 const sortKey = ref<"index" | "size" | "duration">("index")
 const sortDir = ref<"asc" | "desc">("asc")
 
+/** 表头 checkbox 的 indeterminate（部分选中）态：aria-checked="mixed" + 视觉短横线 */
+const isHeaderMixed = computed(
+  () => planStore.isSomeSelected && !planStore.isAllSelected,
+)
+
 /** 状态筛选项：等待中合并 staged/pending/preparing/retrying，与表格措辞一致 */
 const STATUS_FILTERS: Array<{ value: string; label: string; match: (s: TaskStatus) => boolean }> = [
   { value: "all", label: "全部状态", match: () => true },
@@ -556,14 +561,15 @@ const selectedTaskPreview = computed(() => {
             <th>
               <span
                 class="ck"
-                :class="{ on: planStore.isAllSelected }"
+                :class="{ on: planStore.isAllSelected, mixed: isHeaderMixed }"
                 data-testid="ck-all"
                 role="checkbox"
-                :aria-checked="planStore.isAllSelected"
+                :aria-checked="isHeaderMixed ? 'mixed' : planStore.isAllSelected"
                 tabindex="0"
                 title="全选 / 取消全选"
                 @click.left="planStore.toggleAll"
                 @keydown.space.prevent="planStore.toggleAll"
+                @keydown.enter.prevent="planStore.toggleAll"
               ></span>
             </th>
             <th>#</th>
@@ -612,6 +618,7 @@ const selectedTaskPreview = computed(() => {
                 title="勾选 / 取消勾选"
                 @click.left.stop="handleCheckboxClick(task, $event)"
                 @keydown.space.prevent="planStore.toggleTask(task.id)"
+                @keydown.enter.prevent="planStore.toggleTask(task.id)"
               ></span>
             </td>
             <td class="t-num">{{ task.index + 1 }}</td>
@@ -646,7 +653,15 @@ const selectedTaskPreview = computed(() => {
                 >
                   {{ getStatusInfo(task.status).text }}
                 </span>
-                <div v-if="task.status === 'running'" class="row-bar">
+                <div
+                  v-if="task.status === 'running'"
+                  class="row-bar"
+                  role="progressbar"
+                  aria-label="任务进度"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  :aria-valuenow="Math.round(task.progress || 0)"
+                >
                   <i :style="{ width: `${task.progress || 0}%` }"></i>
                 </div>
                 <button
@@ -1224,6 +1239,18 @@ tbody tr.dim {
   background: var(--primary);
   border-color: var(--primary);
   color: #101014;
+}
+
+/* 部分选中：短横线，与全选的 ✓ 区分 */
+.ck.mixed::after {
+  content: '−';
+  opacity: 1;
+}
+
+/* 键盘焦点环：.ck 是 role=checkbox 的 span，鼠标点击不会出现，仅 Tab 聚焦时显示 */
+.ck:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 [data-theme="light"] .ck.on {

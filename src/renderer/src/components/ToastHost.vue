@@ -9,7 +9,7 @@ const { toasts, dismiss } = useToast()
     提示挂载点。容器带 aria-live，错误用 role="alert"（assertive）即时播报，
     其余用 role="status"（polite），避免多条提示同时抢读屏。
   -->
-  <div class="toast-host" data-testid="toast-host">
+  <div class="toast-host" data-testid="toast-host" aria-live="polite">
     <TransitionGroup name="toast">
       <div
         v-for="t in toasts"

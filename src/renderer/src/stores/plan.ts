@@ -102,6 +102,11 @@ export const usePlanStore = defineStore("plan", () => {
     return tasks.value.length > 0 && tasks.value.every((t) => selectedIds.value.has(t.id))
   })
 
+  /** 部分选中：表头 checkbox 的 indeterminate（aria-checked="mixed"）依赖它 */
+  const isSomeSelected = computed(() => {
+    return !isAllSelected.value && tasks.value.some((t) => selectedIds.value.has(t.id))
+  })
+
   const totalDuration = computed(() => {
     return tasks.value.reduce((acc, t) => acc + (t.duration || 0), 0)
   })
@@ -498,6 +503,7 @@ export const usePlanStore = defineStore("plan", () => {
     executedDuration,
     allTasksCompleted,
     isAllSelected,
+    isSomeSelected,
     totalDuration,
     totalSize,
     stagedCount,

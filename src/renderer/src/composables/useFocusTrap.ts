@@ -1,4 +1,4 @@
-import { nextTick, watch, type Ref } from "vue"
+import { nextTick, onUnmounted, watch, type Ref } from "vue"
 
 const FOCUSABLE_SELECTOR = [
   "a[href]",
@@ -72,5 +72,11 @@ export function useFocusTrap(containerRef: Ref<HTMLElement | null>, isActive: Re
       previouslyFocused?.focus?.()
       previouslyFocused = null
     }
+  })
+
+  // 激活态下组件直接卸载（如父级 v-if 整体移除）时，watch 不会再次触发，
+  // keydown 捕获监听必须在这里兜底摘除
+  onUnmounted(() => {
+    document.removeEventListener("keydown", trapTab, true)
   })
 }

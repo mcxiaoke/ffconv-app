@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, ref, onUnmounted } from "vue"
 import { usePlanStore } from "../stores/plan"
 import { useConfigStore } from "../stores/config"
 import { useLogStore } from "../stores/log"
+import { useFocusTrap } from "../composables/useFocusTrap"
 import { formatSize, formatDuration, highlightFfmpegCmd } from "../utils/format"
 
 const plan = usePlanStore()
 const config = useConfigStore()
 const logStore = useLogStore()
+
+const drawerRef = ref<HTMLElement | null>(null)
+useFocusTrap(drawerRef, computed(() => !!plan.inspectedTask))
 
 const task = computed(() => plan.inspectedTask)
 const copiedCmd = ref(false)
@@ -265,18 +269,29 @@ function startResizing(e: MouseEvent) {
     window.removeEventListener("mouseup", stop)
     // 指针在窗口外松开时收不到 mouseup，监听与 isResizing 会常驻
     window.removeEventListener("blur", stop)
+    stopResizing = null
   }
 
+  stopResizing = stop
   window.addEventListener("mousemove", onMouseMove)
   window.addEventListener("mouseup", stop)
   window.addEventListener("blur", stop)
 }
+
+// 拖拽中组件被卸载时，window 监听必须兜底摘除
+let stopResizing: (() => void) | null = null
+onUnmounted(() => stopResizing?.())
 </script>
 
 <template>
   <div v-if="task" class="inspector-mask" data-testid="inspector-mask" @click="close">
     <aside
+      ref="drawerRef"
       class="inspector-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="任务详情"
+      tabindex="-1"
       :class="{ 'no-transition': isResizing }"
       :style="{ width: `${drawerWidth}px` }"
       @click.stop

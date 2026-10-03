@@ -405,9 +405,10 @@ const audioSummary = computed(() => {
           <a
             v-if="config.outputDirtyCount > 0"
             class="reset-link"
+            href="#"
             data-testid="btn-reset-output"
             title="恢复默认值（输出位置 / 目录结构 / 前缀 / 后缀）"
-            @click="config.resetOutputSettings()"
+            @click.prevent="config.resetOutputSettings()"
           >
             重置 ({{ config.outputDirtyCount }})
           </a>
@@ -423,6 +424,8 @@ const audioSummary = computed(() => {
           @dragover.prevent
           @drop.stop="handleDrop"
           @click="pickDirectory"
+          @keydown.enter.prevent="pickDirectory"
+          @keydown.space.prevent="pickDirectory"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
             <path d="M3 16v2.5A2.5 2.5 0 0 0 5.5 21h13a2.5 2.5 0 0 0 2.5-2.5V16" />
@@ -553,7 +556,17 @@ const audioSummary = computed(() => {
 
     <!-- 3 视频 -->
     <section class="card" data-testid="card-video">
-      <div class="card-title toggle" @click="isVideoOpen = !isVideoOpen">
+      <div
+        class="card-title toggle"
+        role="button"
+        tabindex="0"
+        :aria-expanded="isVideoOpen"
+        aria-controls="video-body"
+        data-testid="card-video-toggle"
+        @click="isVideoOpen = !isVideoOpen"
+        @keydown.enter.self.prevent="isVideoOpen = !isVideoOpen"
+        @keydown.space.self.prevent="isVideoOpen = !isVideoOpen"
+      >
         <span class="title-with-sum">
           视频
           <span class="sum" data-testid="video-summary">{{ videoSummary }}</span>
@@ -562,9 +575,10 @@ const audioSummary = computed(() => {
           <a
             v-if="config.videoDirtyCount > 0"
             class="reset-link"
+            href="#"
             data-testid="btn-reset-video"
             title="恢复预设值"
-            @click.stop="config.resetVideoTune()"
+            @click.prevent.stop="config.resetVideoTune()"
           >
             重置 ({{ config.videoDirtyCount }})
           </a>
@@ -574,7 +588,7 @@ const audioSummary = computed(() => {
         </div>
       </div>
 
-      <div v-show="isVideoOpen" class="card-body" data-testid="video-body">
+      <div id="video-body" v-show="isVideoOpen" class="card-body" data-testid="video-body">
         <!-- 分辨率 -->
         <div class="field">
           <div class="field-label-row">
@@ -740,7 +754,17 @@ const audioSummary = computed(() => {
 
     <!-- 4 音频 -->
     <section class="card" data-testid="card-audio">
-      <div class="card-title toggle" @click="isAudioOpen = !isAudioOpen">
+      <div
+        class="card-title toggle"
+        role="button"
+        tabindex="0"
+        :aria-expanded="isAudioOpen"
+        aria-controls="audio-body"
+        data-testid="card-audio-toggle"
+        @click="isAudioOpen = !isAudioOpen"
+        @keydown.enter.self.prevent="isAudioOpen = !isAudioOpen"
+        @keydown.space.self.prevent="isAudioOpen = !isAudioOpen"
+      >
         <span class="title-with-sum">
           音频
           <span class="sum" data-testid="audio-summary">{{ audioSummary }}</span>
@@ -749,9 +773,10 @@ const audioSummary = computed(() => {
           <a
             v-if="config.audioDirtyCount > 0"
             class="reset-link"
+            href="#"
             data-testid="btn-reset-audio"
             title="恢复预设值"
-            @click.stop="config.resetAudioTune()"
+            @click.prevent.stop="config.resetAudioTune()"
           >
             重置 ({{ config.audioDirtyCount }})
           </a>
@@ -761,7 +786,7 @@ const audioSummary = computed(() => {
         </div>
       </div>
 
-      <div v-show="isAudioOpen" class="card-body" data-testid="audio-body">
+      <div id="audio-body" v-show="isAudioOpen" class="card-body" data-testid="audio-body">
         <div class="field">
           <div class="field-label-row">
             <label class="lbl">

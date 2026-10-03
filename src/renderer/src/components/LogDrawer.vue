@@ -1,16 +1,21 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from "vue"
+import { ref, computed, watch, nextTick, onUnmounted } from "vue"
 import { useLogStore } from "../stores/log"
 import { useToast } from "../composables/useToast"
+import { useFocusTrap } from "../composables/useFocusTrap"
 
 const logStore = useLogStore()
 const toast = useToast()
 const bodyRef = ref<HTMLElement | null>(null)
+const drawerRef = ref<HTMLElement | null>(null)
+useFocusTrap(drawerRef, computed(() => logStore.drawerOpen))
 
 // 默认 680px，支持读取上次拖拽偏好
 const savedW = Number(localStorage.getItem("mediac_log_drawer_width"))
 const drawerWidth = ref(savedW && savedW >= 420 ? savedW : 680)
 const isResizing = ref(false)
+// 拖拽中组件被卸载（如 ESC 关闭）时，window 监听必须兜底摘除
+let stopResizing: (() => void) | null = null
 
 function startResizing(e: MouseEvent) {
   isResizing.value = true
@@ -31,12 +36,16 @@ function startResizing(e: MouseEvent) {
     window.removeEventListener("mouseup", stop)
     // 指针在窗口外松开时收不到 mouseup，监听与 isResizing 会常驻
     window.removeEventListener("blur", stop)
+    stopResizing = null
   }
 
+  stopResizing = stop
   window.addEventListener("mousemove", onMouseMove)
   window.addEventListener("mouseup", stop)
   window.addEventListener("blur", stop)
 }
+
+onUnmounted(() => stopResizing?.())
 
 const isExpanded = ref(false)
 
@@ -132,7 +141,12 @@ async function saveLogFile() {
 <template>
   <div v-if="logStore.drawerOpen" class="log-mask" @click="close">
     <aside
+      ref="drawerRef"
       class="log-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label="日志"
+      tabindex="-1"
       :class="{ 'no-transition': isResizing }"
       :style="{ width: `${drawerWidth}px` }"
       data-testid="log-drawer"
