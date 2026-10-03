@@ -581,14 +581,14 @@ handleTrusted(IPC_CHANNELS.EXECUTION_GET_STATUS, () => transcodeService.getExecu
 // （staged 输入、计划产物、原生对话框授权根），防止被攻破的渲染层打开任意路径
 handleTrusted(IPC_CHANNELS.SYSTEM_SHOW_IN_FOLDER, async (fullPath: unknown) => {
   if (typeof fullPath !== "string") throw new Error("fullPath must be a string")
-  if (!transcodeService.isKnownMediaPath(fullPath)) {
+  if (!(await transcodeService.isKnownMediaPath(fullPath))) {
     throw new Error("Path is not recognized by the main process")
   }
   return showItemInFolder(fullPath)
 })
 handleTrusted(IPC_CHANNELS.SYSTEM_OPEN_PATH, async (fullPath: unknown) => {
   if (typeof fullPath !== "string") throw new Error("fullPath must be a string")
-  if (!transcodeService.isKnownMediaPath(fullPath)) {
+  if (!(await transcodeService.isKnownMediaPath(fullPath))) {
     throw new Error("Path is not recognized by the main process")
   }
   return openPath(fullPath)

@@ -179,14 +179,23 @@ export function normalizeCliOptions(argv = {}, deps = {}) {
     })
 }
 
+// Desktop（IPC）入口禁止采信的字段：
+// - errorFile：writeErrorFile 会将其视为显式路径直接 appendFile，渲染层可控即成
+//   「向任意路径追加内容」原语（--error-file 是 CLI 时代的操作员选项）；
+// - deleteSourceConfirmed / autoConfirm：删源确认位只能由主进程原生确认框置位
+//   （fail-closed，见 ffmpeg-service.ts confirmDeleteSource），不接受渲染层声明。
+const DESKTOP_FORBIDDEN_KEYS = new Set(["errorFile", "deleteSourceConfirmed", "autoConfirm"])
+
 /**
  * Normalize desktop (Electron) input into the shared FFmpeg option shape.
  */
 export function normalizeDesktopOptions(body = {}) {
     const source = asObject(body, "body")
     const options = asObject(source.options, "options")
+    const merged = { ...options, ...pickTopLevelDesktopOptions(source) }
+    for (const key of DESKTOP_FORBIDDEN_KEYS) delete merged[key]
     return validateAndNormalize(
-        { ...options, ...pickTopLevelDesktopOptions(source) },
+        merged,
         {
             mode: source.mode || "plan",
             inputs: source.inputs || source.input,

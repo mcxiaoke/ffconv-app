@@ -1,5 +1,5 @@
 import path from "node:path"
-import { readFile, rename, writeFile } from "node:fs/promises"
+import { readFile, realpath, rename, writeFile } from "node:fs/promises"
 
 /**
  * 原生对话框已选根路径白名单（S-1 加固的一部分）。
@@ -62,5 +62,66 @@ export class PathWhitelist {
       if (target === root || target.startsWith(prefix)) return true
     }
     return false
+  }
+
+  /**
+   * isAuthorizedRoot 的 realpath 加固版（防 junction/symlink 穿越绕过）。
+   *
+   * 词法判定（isAuthorizedRoot）只做 `path.resolve` 字符串比较：已授权根里放一个
+   * junction 指向白名单外（如 D:\Media\link → E:\secret），请求
+   * `D:\Media\link\file` 也能通过词法比较，随后 shell.openPath 跟随链接打开真实目标。
+   * 这里在词法通过后，把「匹配的授权根」与「target 的最长已存在前缀」都解析到
+   * 真实路径再比一次——真实路径落在所有授权根之外即拒绝。
+   *
+   * 解析失败时（根已被删除/移动、target 在校验瞬间被删等）退回词法判定，
+   * 即保持旧行为：此时 open/show 本身也会因路径不存在而失败，不构成放行面。
+   */
+  async isAuthorizedRootResolved(targetPath: string): Promise<boolean> {
+    if (!this.isAuthorizedRoot(targetPath)) return false
+
+    const target = this.normalizeForCompare(targetPath)
+    let matchedRoot: string | null = null
+    for (const root of this.authorizedRoots) {
+      const prefix = root.endsWith(path.sep) ? root : root + path.sep
+      if (target === root || target.startsWith(prefix)) {
+        matchedRoot = root
+        break
+      }
+    }
+    if (!matchedRoot) return false
+
+    let realRoot: string
+    try {
+      realRoot = this.normalizeForCompare(await realpath(matchedRoot))
+    } catch {
+      return true // 授权根不可解析（已删除等）：退回词法判定
+    }
+
+    const realTarget = await realpathLongestExisting(targetPath)
+    if (!realTarget) return true // target 无法解析：退回词法判定
+    const realTargetKey = this.normalizeForCompare(realTarget)
+    const realPrefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep
+    return realTargetKey === realRoot || realTargetKey.startsWith(realPrefix)
+  }
+}
+
+/**
+ * 解析 p 的真实路径；若 p（或其中间组件）不存在，则对最长已存在前缀做 realpath，
+ * 剩余后缀按词法拼回。全链路（直到盘根）都不可解析时返回 null。
+ * 中间组件里的 junction/symlink 仍会被 realpath 展开——这正是本函数的目的。
+ */
+async function realpathLongestExisting(p: string): Promise<string | null> {
+  let current = path.resolve(p)
+  let suffix = ""
+  for (;;) {
+    try {
+      const real = await realpath(current)
+      return suffix ? path.join(real, suffix) : real
+    } catch {
+      const parent = path.dirname(current)
+      if (parent === current) return null
+      suffix = suffix ? path.join(path.basename(current), suffix) : path.basename(current)
+      current = parent
+    }
   }
 }

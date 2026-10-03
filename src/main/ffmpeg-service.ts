@@ -289,10 +289,10 @@ class DesktopTranscodeService {
    * S-1 加固：SYSTEM_OPEN_PATH / SYSTEM_SHOW_IN_FOLDER 只接受已知路径——
    * ① staged 输入与当前计划任务的源/产物；
    * ② 上述已知文件的直接父目录（「打开输出目录」传的是 dirname(fileDst)）；
-   * ③ 原生对话框授权根自身或其子路径（PathWhitelist 提供）。
+   * ③ 原生对话框授权根自身或其子路径（PathWhitelist 提供，realpath 加固版）。
    * 渲染层即使被攻破，也无法让主进程打开任意外部路径。
    */
-  isKnownMediaPath(fullPath: unknown): boolean {
+  async isKnownMediaPath(fullPath: unknown): Promise<boolean> {
     if (typeof fullPath !== "string" || !fullPath || !path.isAbsolute(fullPath)) return false
     const target = this.whitelist.normalizeForCompare(fullPath)
 
@@ -306,7 +306,7 @@ class DesktopTranscodeService {
     for (const f of knownFiles) {
       if (this.whitelist.normalizeForCompare(path.dirname(f)) === target) return true
     }
-    return this.whitelist.isAuthorizedRoot(target)
+    return this.whitelist.isAuthorizedRootResolved(target)
   }
 
   /** 已解析到的 ffmpeg 路径（未解析时为 null），供「关于」等只读展示使用 */
