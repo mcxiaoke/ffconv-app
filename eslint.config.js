@@ -119,4 +119,89 @@ export default tseslint.config(
             "@typescript-eslint/no-explicit-any": "warn",
         },
     },
+
+    // ===========================================
+    // 依赖边界门禁（AGENTS.md「模块结构与依赖边界」的可执行化）。
+    // no-restricted-imports 的 patterns 按 import 书写串做 gitignore 式匹配，
+    // 因此用 **/core/** 形态同时覆盖相对路径（../../core/…）与别名两种写法。
+    // ===========================================
+
+    // 主进程：只允许经 core/transcode/index.js facade 使用引擎，
+    // 禁止深导入 core/transcode/* 内部模块与 core/lib/*
+    {
+        files: ["src/main/**/*.ts"],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: [
+                                "**/core/transcode/**",
+                                "!**/core/transcode/index.js",
+                                "!**/core/transcode/index",
+                                "**/core/lib/**",
+                            ],
+                            message:
+                                "src/main 只允许经 core/transcode/index.js facade 调用引擎（AGENTS.md 依赖边界）",
+                        },
+                    ],
+                },
+            ],
+        },
+    },
+
+    // preload / renderer：不得 import core/（一切经 typed IPC），不得导入 Node 专有模块
+    //（preload 产物为 CJS，renderer 无 Node 权限；Node API 需求一律加到 preload 契约里）
+    {
+        files: ["src/preload/**/*.ts", "src/renderer/**/*.{ts,vue}"],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: ["**/core/**"],
+                            message:
+                                "preload/renderer 不得 import core/，只经 src/shared 契约的 typed IPC（AGENTS.md 依赖边界）",
+                        },
+                        {
+                            group: [
+                                "node:*",
+                                "fs",
+                                "fs/promises",
+                                "path",
+                                "os",
+                                "crypto",
+                                "child_process",
+                                "stream",
+                                "url",
+                                "util",
+                                "events",
+                            ],
+                            message: "preload/renderer 不得导入 Node 专有模块（AGENTS.md 依赖边界）",
+                        },
+                    ],
+                },
+            ],
+        },
+    },
+
+    // 转码引擎 core/：不得反向 import src/
+    {
+        files: ["core/**/*.js"],
+        rules: {
+            "no-restricted-imports": [
+                "error",
+                {
+                    patterns: [
+                        {
+                            group: ["**/src/**"],
+                            message: "core/ 不得 import src/，宿主能力经 facade 参数注入（AGENTS.md 依赖边界）",
+                        },
+                    ],
+                },
+            ],
+        },
+    },
 )
