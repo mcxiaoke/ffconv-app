@@ -21,6 +21,13 @@ const isWindows = os.platform() === "win32"
 const mediaInfoBin = isWindows ? "mediainfo.exe" : "mediainfo"
 const ffprobeBin = isWindows ? "ffprobe.exe" : "ffprobe"
 
+// 探测进程必须有超时兜底：网络盘掉线或被杀软挂起的 ffprobe/mediainfo 会永久阻塞
+// createPlan，使 isExecuting() 恒真、reload 被永久禁止（对比 hwdetect.js 的 settleWithin）。
+// 超时后走 getMediaInfo 既有的备选探测器回退，两者都超时则报错终止。
+const PROBE_TIMEOUT_MS = 30_000
+// ffprobe/mediainfo 的 JSON 输出只有几 KB，显式声明避免依赖默认值（execa 默认 100MB）
+const PROBE_MAX_BUFFER = 16 * 1024 * 1024
+
 // 检测可执行文件是否存在
 const HAS_FFPROBE_EXE = await which(ffprobeBin, { nothrow: true })
 const HAS_MEDIAINFO_EXE = await which(mediaInfoBin, { nothrow: true })
@@ -57,6 +64,8 @@ async function ffprobeCall(filePath, { probePath = ffprobeBin, signal = null } =
     // 使用 execa 执行 ffprobe 命令
     const { stdout } = await execa(probePath, cmdArgs, {
         encoding: "latin1",
+        timeout: PROBE_TIMEOUT_MS,
+        maxBuffer: PROBE_MAX_BUFFER,
         ...(signal ? { cancelSignal: signal } : {}),
     })
     // 没有filename字段不会乱码，不过代码还是保留
@@ -84,6 +93,8 @@ async function mediainfoCall(filePath, { signal = null, mediainfoPath = null } =
     // { encoding: 'binary' } 与 fixEncoding 函数对应
     const { stdout } = await execa(mediainfoPath || mediaInfoBin, cmdArgs, {
         encoding: "latin1",
+        timeout: PROBE_TIMEOUT_MS,
+        maxBuffer: PROBE_MAX_BUFFER,
         ...(signal ? { cancelSignal: signal } : {}),
     })
     // 解决windows下文件名乱码问题

@@ -37,6 +37,10 @@ export {
 }
 
 export const LOG_TAG = "FFConv"
+// execa 会把 stderr 全量缓冲进 promise 结果（错误提取依赖 error.stderr，不能 buffer:false），
+// 默认 maxBuffer 100MB：--debug（-v repeat+level+info）下长片源的状态行足以溢出，
+// 溢出 => MaxBufferError => 转码其实已完成却被判失败并触发无意义的 CPU 重试。显式放宽。
+const TRANSCODE_MAX_BUFFER = 256 * 1024 * 1024
 // ffmpeg 可执行文件路径（模块级缓存，供硬件探测复用）
 let ffmpegPath = null
 
@@ -606,6 +610,7 @@ async function executeFFmpeg(args, entry, options = null) {
         cancelSignal: signal,
         forceKillAfterDelay: 1000,
         cleanup: true,
+        maxBuffer: TRANSCODE_MAX_BUFFER,
     })
     try {
         onSpawn?.(subprocess)
