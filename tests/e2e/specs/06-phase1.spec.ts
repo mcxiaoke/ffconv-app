@@ -57,7 +57,8 @@ test.describe("Phase1 - settings persistence", () => {
         "aria-checked",
         "true",
       )
-      await first.page.keyboard.press("Escape")
+      // P1-6 之后 Esc/取消会回滚本弹窗的改动，持久化必须走「保存设置」
+      await first.page.locator('[data-testid="btn-save-settings"]').click()
       await expect(first.page.locator('[data-testid="settings-modal"]')).toBeHidden()
 
       // 回写是 400ms 防抖，等到三项变更都落到同一个文件
