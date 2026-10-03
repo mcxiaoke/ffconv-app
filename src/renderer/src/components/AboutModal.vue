@@ -71,7 +71,7 @@ const mediainfoPath = computed(() => envStore.summary?.mediainfoPath || "")
             </svg>
           </div>
           <div class="app-meta">
-            <div class="app-name">MediaCli Desktop</div>
+            <div class="app-name">FFConv GUI</div>
             <div class="app-desc">基于 FFmpeg 的现代化高性能本地媒体处理工具</div>
           </div>
         </div>

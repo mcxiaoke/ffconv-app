@@ -14,12 +14,14 @@ if (!gotSingleInstanceLock) {
   app.quit()
 }
 
+app.name = "FFConv GUI"
+
 // Windows 上必须设置 AppUserModelID，否则 Notification 走「无名」身份，
 // Windows 通知中心不显示/不关联到本应用（转码完成通知会静默不弹）。
 // 需在 app ready 之前设置。
 if (process.platform === "win32") {
   try {
-    app.setAppUserModelId("com.mediac.desktop")
+    app.setAppUserModelId("com.ffconv.gui")
   } catch {
     // 旧版本 Electron 可能不支持；忽略即可
   }
@@ -92,7 +94,7 @@ function startupLog(message: string) {
   try {
     const logDir = app.getPath("logs")
     mkdirSync(logDir, { recursive: true })
-    appendFileSync(path.join(logDir, "mediac-desktop-startup.log"), `${new Date().toISOString()} ${message}\n`)
+    appendFileSync(path.join(logDir, "ffconv-gui-startup.log"), `${new Date().toISOString()} ${message}\n`)
   } catch {
     // Logging must never mask the original startup error.
   }
@@ -326,18 +328,18 @@ function setupApplicationMenu(window: BrowserWindow) {
           },
         },
         {
-          label: "关于 mediac FFmpeg Studio",
+          label: "关于 FFConv GUI",
           click: () => {
             void dialog
               .showMessageBox(window, {
                 type: "info",
-                title: "关于 mediac FFmpeg Studio",
-                message: "mediac FFmpeg Studio",
+                title: "关于 FFConv GUI",
+                message: "FFConv GUI",
                 detail: [
                   `版本 ${app.getVersion()}`,
                   `Electron ${process.versions.electron} / Node ${process.versions.node}`,
                   `ffmpeg: ${summaryFfmpegPath() || "未检测到"}`,
-                  "批量音视频转码工作台 · 基于 mediac CLI 的 ffmpeg 核心",
+                  "批量音视频转码工作台 · 基于 FFmpeg 的转码客户端",
                 ].join("\n"),
                 buttons: ["确定"],
                 defaultId: 0,
@@ -355,7 +357,7 @@ function setupApplicationMenu(window: BrowserWindow) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    title: "mediac FFmpeg Studio · 批量音视频转码工作台",
+    title: "FFConv GUI · 批量音视频转码工作台",
     icon: getAppIconPath(),
     width: 1280,
     height: 820,
@@ -549,7 +551,7 @@ handleTrusted(IPC_CHANNELS.SYSTEM_SAVE_LOG, async (text: unknown) => {
   const dir = app.getPath("logs")
   await mkdir(dir, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
-  const filePath = path.join(dir, `mediac-desktop-${stamp}.log`)
+  const filePath = path.join(dir, `ffconv-gui-${stamp}.log`)
   await writeFile(filePath, text.slice(0, 20_000_000), "utf8")
   startupLog(`log saved: ${filePath}`)
   return { path: filePath }
@@ -557,7 +559,7 @@ handleTrusted(IPC_CHANNELS.SYSTEM_SAVE_LOG, async (text: unknown) => {
 handleTrusted(IPC_CHANNELS.SYSTEM_NOTIFY, async (payload: unknown) => {
   const p = payload as { title?: string; body?: string }
   if (!p || typeof p !== "object") throw new Error("Invalid notify payload")
-  showNotification(p.title || "mediac", p.body || "", () => {
+  showNotification(p.title || "FFConv GUI", p.body || "", () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()

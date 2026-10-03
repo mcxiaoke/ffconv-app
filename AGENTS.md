@@ -7,7 +7,7 @@
 
 ## 项目概述
 
-MediaCli Desktop（包名 `mediac-desktop`，Electron + Vue 3 + Pinia）是 FFmpeg 的
+FFConv GUI（包名 `ffconv-gui`，Electron + Vue 3 + Pinia）是 FFmpeg 的
 可视化转码客户端：选文件/目录 → 选预设 → 检查命令计划 → 执行转码，默认 dry-run、
 确认后执行。主进程经 `core/transcode/index.js` facade 使用全部转码能力。
 

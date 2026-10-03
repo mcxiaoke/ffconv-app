@@ -1,4 +1,4 @@
-# MediaCli Desktop
+# FFConv GUI
 
 A cross-platform desktop GUI for FFmpeg, built with Electron + Vue 3. It turns
 FFmpeg's encoder/filter/hardware-acceleration capabilities into a visual

@@ -1,5 +1,5 @@
-appId: com.mediac.desktop
-productName: MediaCli
+appId: com.ffconv.gui
+productName: FFConv GUI
 asar: true
 directories:
   output: release
@@ -24,6 +24,7 @@ asarUnpack:
   - resources/**
 win:
   icon: build/icon.ico
+  executableName: FFConv GUI
   target:
     - nsis
     - portable

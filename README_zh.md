@@ -1,4 +1,4 @@
-# MediaCli Desktop
+# FFConv GUI
 
 基于 Electron + Vue 3 的 FFmpeg 可视化转码客户端。把 FFmpeg 的编码器、滤镜与
 硬件加速能力封装成图形化工作流：选择文件或目录 → 选预设 → 检查生成的命令计划

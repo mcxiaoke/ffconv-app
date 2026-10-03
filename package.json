@@ -1,8 +1,9 @@
 {
-  "name": "mediac-desktop",
+  "name": "ffconv-gui",
+  "productName": "FFConv GUI",
   "version": "0.1.0",
   "private": true,
-  "description": "MediaCli FFmpeg desktop client",
+  "description": "FFConv GUI - FFmpeg desktop client",
   "author": "Big Cat <mcxiaoke@foxmail.com>",
   "type": "module",
   "main": "./out/main/index.js",

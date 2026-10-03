@@ -107,7 +107,7 @@ const api: DesktopApi = {
 }
 
 if (!process.contextIsolated) {
-  throw new Error("MediaCli preload requires contextIsolation")
+  throw new Error("FFConv GUI preload requires contextIsolation")
 }
 
 contextBridge.exposeInMainWorld("api", api)
