@@ -66,3 +66,23 @@ test("已取消的 signal 立即抛 AbortError，不进入探测", async () => {
         (err) => err.name === "AbortError",
     )
 })
+
+test("音频任务占位结果必须回传 caps（P1-2：buildAudioArgs 的编码器降级链依赖它）", async () => {
+    const caps = nvidiaCaps()
+    const plan = await resolveEntryHwPlan(
+        { path: "D:\\media\\song.mp3", info: { audio: { format: "mp3" } }, preset: { type: "video" }, argv: {} },
+        { caps },
+    )
+    assert.equal(plan.tier.name, "cpu")
+    assert.equal(plan.caps, caps, "音频早返回分支丢弃了 caps，fallbackAudioEncoder 链会失效")
+})
+
+test("音频预设（type=audio）占位结果同样回传 caps", async () => {
+    const caps = nvidiaCaps()
+    const plan = await resolveEntryHwPlan(
+        { path: "D:\\media\\movie.mp4", info: { audio: { format: "aac" } }, preset: { type: "audio" }, argv: {} },
+        { caps },
+    )
+    assert.equal(plan.tier.name, "cpu")
+    assert.equal(plan.caps, caps)
+})

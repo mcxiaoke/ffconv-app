@@ -150,7 +150,11 @@ export function appendSubtitleArgs(entry, inputArgs, tempPreset) {
             "-disposition:s:0",
             "default",
         )
-        pushStreamMaps(entry, inputArgs, ["-map", "1:0?"])
+        // ⚠️ 必须带 `-map 0:a?`：ffmpeg 只要出现任意 -map 就切到手动流选择，
+        // 只映射视频+字幕（`0:<idx>` + `1:0?`）会把源的全部音轨静默丢弃，
+        // 产物无声（真机复现：双音轨 mkv + 同名 .srt → 产物 0 条音频流）。
+        // 与其余三条分支（SUB_ARGS_MKV / SUB_ARGS_MP4 / SUB_ARGS_MP4_DROP）保持一致。
+        pushStreamMaps(entry, inputArgs, ["-map", "0:a?", "-map", "1:0?"])
         return
     }
 

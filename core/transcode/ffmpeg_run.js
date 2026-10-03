@@ -700,6 +700,11 @@ export async function resolveEntryHwPlan(
 
     // 音频文件或纯音频预设（如 audio_extract）不做视频分层，直接给 cpu 层占位
     if (helper.isAudioFile(entry.path) || entry.preset?.type === "audio") {
+        // ⚠️ 音频任务同样必须带 caps：buildAudioArgs 的编码器静态降级链
+        // （如 nonfree-only 的 libfdk_aac → aac）依赖 caps.encoders，
+        // 缺了它链路失效，本机缺编码器时整批音频任务 Unknown encoder 直接失败。
+        // detectHardwareCapabilities 有进程内缓存 + in-flight 去重，成本可忽略。
+        const resolvedCaps = caps || (await detectHardwareCapabilities({ ffmpegPath: bin || ffmpegPath }))
         const cpuTier = TIERS.find((t) => t.name === "cpu")
         return {
             tier: cpuTier,
@@ -707,6 +712,7 @@ export async function resolveEntryHwPlan(
             degraded: false,
             tried: ["cpu"],
             reason: helper.isAudioFile(entry.path) ? "audio file" : "audio preset",
+            caps: resolvedCaps,
         }
     }
 

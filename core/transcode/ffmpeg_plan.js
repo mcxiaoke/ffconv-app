@@ -320,12 +320,18 @@ function calculateDstArgs(entry) {
             }
         }
         if (srcAudioBitrate > 0) {
-            // 如果启用了智能码率
-            if (ep.smartBitrate) {
+            // ⚠️ 判定顺序：预设/用户**显式声明**的码率（reqAudioBitrate）必须优先于
+            // 智能码率。旧实现 smartBitrate=true 时无视 audioBitrate —— aac_high/
+            // medium/low/he 只覆盖 audioBitrate 而继承基类的 smartBitrate:true，
+            // 选 128K 实际产出 320K（智能档位），suffix 还会把错误码率写进文件名。
+            // 用户自定义预设想用智能码率时，留空 audioBitrate 即可。
+            if (ep.userArgs.audioBitrate || ep.audioBitrate) {
+                dstAudioBitrate = reqAudioBitrate
+            } else if (ep.smartBitrate) {
                 dstAudioBitrate =
                     bitrateMap.find((br) => srcAudioBitrate > br.threshold)?.value || 48 * 1000
             } else {
-                // 智能码率关闭，直接使用用户值或预设值
+                // 智能码率关闭且无声明值：保持旧行为（dstAudioBitrate = reqAudioBitrate = 0）
                 dstAudioBitrate = reqAudioBitrate
             }
         } else {
