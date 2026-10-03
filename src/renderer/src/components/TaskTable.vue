@@ -232,7 +232,9 @@ function removeTask(task: PlanTask, event?: MouseEvent) {
 const canReorder = computed(() => sortKey.value === "index" && !isPlanBusy())
 
 function execIndex(task: PlanTask) {
-  return planStore.tasks.findIndex((t) => t.id === task.id)
+  // planStore.taskIndexById 是 tasks 引用变更时重建的 Map：渲染期 O(1)，
+  // 取代此前每行 findIndex 全表扫描（1000 任务 × 10Hz 进度 ≈ 每秒 2000 万次比较）
+  return planStore.taskIndexById.get(task.id) ?? -1
 }
 
 function canMove(task: PlanTask, delta: number) {
@@ -761,8 +763,9 @@ const selectedTaskPreview = computed(() => {
                 </button>
                 <button
                   class="icon-btn del-btn"
-                  title="从任务列表中移除"
+                  :title="isPlanBusy() ? '转码中不可移除任务' : '从任务列表中移除'"
                   data-testid="btn-remove-task"
+                  :disabled="isPlanBusy()"
                   @click="removeTask(task, $event)"
                 >
                   <svg class="i sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

@@ -20,6 +20,13 @@ const emit = defineEmits<{
 const plan = usePlanStore()
 const logStore = useLogStore()
 
+/** 忙碌态（与 App.vue isBusy / useTaskSelection.isPlanBusy 同口径）。
+ * 此前「扫描」「清空」的 disabled 判据只挡 RUNNING，PLANNING/STOPPING 时
+ * 按钮可点但动作函数早退——「可点但静默无效」（P2-32）。 */
+const isBusy = computed(() =>
+  plan.status === "RUNNING" || plan.status === "PLANNING" || plan.status === "STOPPING"
+)
+
 // 状态标签：措辞对齐主流转码工具（HandBrake / Shutter Encoder / FFmpeg Batch）
 // 的习惯用词——「扫描」对应读取媒体并按当前设置算出每个文件的目标（ffmpeg 的
 // scan 术语），「就绪/扫描中/转码中/停止中/完成/失败」都是通用说法。
@@ -122,7 +129,7 @@ function toggleTheme() {
           'btn-primary pulse': plan.status === 'STALE' || plan.hasStaged,
           'btn-secondary': plan.status !== 'STALE' && !plan.hasStaged
         }"
-        :disabled="plan.status === 'RUNNING' || plan.status === 'PLANNING'"
+        :disabled="isBusy"
         data-testid="btn-plan"
         @click="emit('create-plan')"
       >
@@ -173,7 +180,7 @@ function toggleTheme() {
 
       <button
         class="btn btn-ghost"
-        :disabled="plan.status === 'RUNNING' || plan.tasks.length === 0"
+        :disabled="isBusy || plan.tasks.length === 0"
         data-testid="btn-clear"
         @click="emit('clear-all')"
       >
